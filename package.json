@@ -1,0 +1,54 @@
+{
+  "name": "web-finalshell",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "drizzle:generate": "drizzle-kit generate",
+    "d1:migrate:local": "wrangler d1 migrations apply finalshell-sync-db --local",
+    "d1:migrate:remote": "wrangler d1 migrations apply finalshell-sync-db --remote",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-search": "^0.15.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0",
+    "clsx": "^2.1.1",
+    "drizzle-orm": "^0.39.3",
+    "hono": "^4.7.2",
+    "lucide-react": "^1.16.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^3.0.2",
+    "uplot": "^1.6.31",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250224.0",
+    "@types/node": "^22.13.5",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "drizzle-kit": "^0.30.4",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0",
+    "wrangler": "^3.111.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp",
+      "workerd"
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "web-finalshell",
+  "main": "src/server/index.ts",
+  "compatibility_date": "2026-03-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist/client",
+    "not_found_handling": "single-page-application",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "finalshell-sync-db",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SSH_SESSION",
+        "class_name": "SshSessionDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["SshSessionDO"]
+    }
+  ]
+}
