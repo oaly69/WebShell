@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import type { TerminalSession } from '../../store/useSessionStore';
 import { encodePtyData, encodeControlMsg } from '@shared/ws-protocol';
@@ -18,6 +17,7 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
 
   useEffect(() => {
     if (!containerRef.current) return;
+    containerRef.current.innerHTML = '';
 
     // Initialize Xterm
     const term = new Terminal({
@@ -52,13 +52,14 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
 
-    try {
-      const webglAddon = new WebglAddon();
-      term.loadAddon(webglAddon);
-    } catch {}
-
     term.open(containerRef.current);
-    fitAddon.fit();
+    
+    // Fit safely after layout paint
+    requestAnimationFrame(() => {
+      try {
+        fitAddon.fit();
+      } catch {}
+    });
 
     termRef.current = term;
     fitAddonRef.current = fitAddon;
@@ -73,20 +74,26 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
     // Handle Resize
     const handleResize = () => {
       if (!fitAddonRef.current || !termRef.current) return;
-      fitAddonRef.current.fit();
-      const cols = termRef.current.cols;
-      const rows = termRef.current.rows;
+      try {
+        fitAddonRef.current.fit();
+        const cols = termRef.current.cols;
+        const rows = termRef.current.rows;
 
-      if (session.ws && session.ws.readyState === WebSocket.OPEN) {
-        session.ws.send(encodeControlMsg({ type: 'resize', cols, rows }));
-      }
+        if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+          session.ws.send(encodeControlMsg({ type: 'resize', cols, rows }));
+        }
+      } catch {}
     };
 
     window.addEventListener('resize', handleResize);
 
     // Register incoming PTY callback
     const onPtyData = (data: Uint8Array) => {
-      term.write(data);
+      if (termRef.current) {
+        try {
+          termRef.current.write(data);
+        } catch {}
+      }
     };
     session.onPtyDataCallbacks.add(onPtyData);
 
@@ -94,7 +101,11 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
       window.removeEventListener('resize', handleResize);
       onDataDisposable.dispose();
       session.onPtyDataCallbacks.delete(onPtyData);
-      term.dispose();
+      try {
+        term.dispose();
+      } catch {}
+      termRef.current = null;
+      fitAddonRef.current = null;
     };
   }, [session.sessionId]);
 

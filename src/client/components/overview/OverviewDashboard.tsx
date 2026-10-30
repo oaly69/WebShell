@@ -35,14 +35,14 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   canInstallPwa,
 }) => {
   const { user } = useAuthStore();
-  const { hosts, snippets } = useSyncStore();
+  const { hosts, snippets, getHostGroups } = useSyncStore();
   const { sessions, openSession } = useSessionStore();
 
   const [search, setSearch] = useState('');
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
 
-  // Compute unique groups
-  const groups = Array.from(new Set(hosts.map((h) => h.group_name || '默认分组')));
+  // Compute all groups including custom created ones
+  const groups = getHostGroups();
 
   // Filter hosts
   const filteredHosts = hosts.filter((h) => {

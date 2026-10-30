@@ -49,7 +49,7 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({ metrics }) => {
         </div>
         <div className="mt-1.5 flex justify-between text-[10px] text-fs-textMuted">
           <span>负载</span>
-          <span className="font-mono">{metrics.cpu.loadAvg.map((v) => v.toFixed(2)).join(' ')}</span>
+          <span className="font-mono">{(metrics.cpu?.loadAvg || []).map((v) => v.toFixed(2)).join(' ')}</span>
         </div>
       </div>
 
@@ -116,7 +116,7 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({ metrics }) => {
           <span>存储空间</span>
         </div>
         <div className="space-y-2">
-          {metrics.disks.map((d, idx) => (
+          {(metrics.disks || []).map((d, idx) => (
             <div key={idx} className="text-[10px]">
               <div className="flex justify-between text-fs-text mb-0.5">
                 <span className="font-mono truncate max-w-[120px]">{d.mount}</span>
@@ -151,7 +151,7 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({ metrics }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-fs-border/40 text-fs-text">
-              {metrics.procs.slice(0, 6).map((p) => (
+              {(metrics.procs || []).slice(0, 6).map((p) => (
                 <tr key={p.pid} className="hover:bg-fs-hover">
                   <td className="py-1 text-fs-textMuted">{p.pid}</td>
                   <td className="py-1 truncate max-w-[80px]" title={p.command}>

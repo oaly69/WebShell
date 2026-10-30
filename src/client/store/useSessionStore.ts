@@ -27,12 +27,14 @@ export interface TerminalSession {
 interface SessionStoreState {
   sessions: TerminalSession[];
   activeSessionId: string | null;
+  activeTab: string; // 'overview' | sessionId
   isBroadcastMode: boolean;
 
   setBroadcastMode: (enabled: boolean) => void;
   openSession: (host: DecryptedHost) => void;
   closeSession: (sessionId: string) => void;
   setActiveSession: (sessionId: string) => void;
+  setActiveTab: (tab: string) => void;
 
   toggleMonitor: (sessionId: string) => void;
   toggleSftp: (sessionId: string) => void;
@@ -47,11 +49,13 @@ interface SessionStoreState {
 export const useSessionStore = create<SessionStoreState>((set, get) => ({
   sessions: [],
   activeSessionId: null,
+  activeTab: 'overview',
   isBroadcastMode: false,
 
   setBroadcastMode: (enabled) => set({ isBroadcastMode: enabled }),
 
-  setActiveSession: (sessionId) => set({ activeSessionId: sessionId }),
+  setActiveSession: (sessionId) => set({ activeSessionId: sessionId, activeTab: sessionId }),
+  setActiveTab: (tab) => set({ activeTab: tab }),
 
   openSession: (host: DecryptedHost) => {
     const sessionId = crypto.randomUUID();
@@ -169,6 +173,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     set((state) => ({
       sessions: [...state.sessions, newSession],
       activeSessionId: sessionId,
+      activeTab: sessionId,
     }));
   },
 
@@ -188,6 +193,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     set({
       sessions: remaining,
       activeSessionId: nextActive,
+      activeTab: nextActive || 'overview',
     });
   },
 

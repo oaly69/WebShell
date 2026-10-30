@@ -13,13 +13,13 @@ import { SftpPanel } from './components/sftp/SftpPanel';
 import { SnippetsDrawer } from './components/snippets/SnippetsDrawer';
 import { MobileKeyBar } from './components/terminal/MobileKeyBar';
 import { Activity, FolderOpen, Terminal } from 'lucide-react';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 export const App: React.FC = () => {
   const { checkAuthStatus, token } = useAuthStore();
   const { fetchHosts, fetchSnippets } = useSyncStore();
-  const { sessions, activeSessionId } = useSessionStore();
+  const { sessions, activeSessionId, activeTab, setActiveTab } = useSessionStore();
 
-  const [isOverviewActive, setIsOverviewActive] = useState(true);
   const [isHostManagerOpen, setIsHostManagerOpen] = useState(false);
   const [isUserManagementOpen, setIsUserManagementOpen] = useState(false);
   const [isSnippetsOpen, setIsSnippetsOpen] = useState(false);
@@ -52,15 +52,6 @@ export const App: React.FC = () => {
     }
   }, [token]);
 
-  // When active session changes or a new session is opened, switch to terminal view
-  useEffect(() => {
-    if (sessions.length > 0 && activeSessionId) {
-      setIsOverviewActive(false);
-    } else {
-      setIsOverviewActive(true);
-    }
-  }, [sessions.length, activeSessionId]);
-
   const handleInstallPwa = async () => {
     if (!deferredPrompt) return;
     deferredPrompt.prompt();
@@ -72,6 +63,7 @@ export const App: React.FC = () => {
   };
 
   const activeSession = sessions.find((s) => s.sessionId === activeSessionId);
+  const isOverview = activeTab === 'overview' || !activeSession || sessions.length === 0;
 
   return (
     <div className="flex h-screen w-screen flex-col bg-fs-bg text-fs-text overflow-hidden select-none">
@@ -83,23 +75,24 @@ export const App: React.FC = () => {
         onOpenHostManager={() => setIsHostManagerOpen(true)}
         onOpenUserManagement={() => setIsUserManagementOpen(true)}
         onToggleSnippets={() => setIsSnippetsOpen(!isSnippetsOpen)}
-        onOpenOverview={() => setIsOverviewActive(true)}
-        isOverviewActive={isOverviewActive || !activeSession}
+        onOpenOverview={() => setActiveTab('overview')}
+        isOverviewActive={isOverview}
         onInstallPwa={handleInstallPwa}
         canInstallPwa={canInstallPwa}
       />
 
       {/* 3. Main Workspace Area */}
       <div className="flex flex-1 overflow-hidden relative">
-        {isOverviewActive || !activeSession ? (
-          <OverviewDashboard
-            onOpenHostManager={() => setIsHostManagerOpen(true)}
-            onOpenUserManagement={() => setIsUserManagementOpen(true)}
-            onOpenSnippets={() => setIsSnippetsOpen(true)}
-            onInstallPwa={handleInstallPwa}
-            canInstallPwa={canInstallPwa}
-          />
-        ) : (
+        <ErrorBoundary fallbackTitle="工作区加载异常" onReset={() => setActiveTab('overview')}>
+          {isOverview ? (
+            <OverviewDashboard
+              onOpenHostManager={() => setIsHostManagerOpen(true)}
+              onOpenUserManagement={() => setIsUserManagementOpen(true)}
+              onOpenSnippets={() => setIsSnippetsOpen(true)}
+              onInstallPwa={handleInstallPwa}
+              canInstallPwa={canInstallPwa}
+            />
+          ) : (
           <div className="flex flex-1 h-full w-full overflow-hidden">
             {/* Desktop Left: Monitor Panel */}
             <div className="hidden lg:flex h-full">
@@ -170,6 +163,7 @@ export const App: React.FC = () => {
             </div>
           </div>
         )}
+        </ErrorBoundary>
 
         {/* Snippets Drawer */}
         <SnippetsDrawer isOpen={isSnippetsOpen} onClose={() => setIsSnippetsOpen(false)} />

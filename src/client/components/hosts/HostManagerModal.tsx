@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useSyncStore } from '../../store/useSyncStore';
 import { useSessionStore } from '../../store/useSessionStore';
 import type { DecryptedHost } from '@shared/types';
+import { GroupManagerModal } from '../common/GroupManagerModal';
 import {
   Server,
   Plus,
@@ -13,6 +14,7 @@ import {
   ChevronRight,
   ChevronDown,
   Folder,
+  FolderCog,
 } from 'lucide-react';
 
 interface HostManagerModalProps {
@@ -21,7 +23,15 @@ interface HostManagerModalProps {
 }
 
 export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onClose }) => {
-  const { hosts, saveHost, deleteHost } = useSyncStore();
+  const {
+    hosts,
+    saveHost,
+    deleteHost,
+    getHostGroups,
+    addHostGroup,
+    renameHostGroup,
+    deleteHostGroup,
+  } = useSyncStore();
   const { openSession } = useSessionStore();
 
   const [search, setSearch] = useState('');
@@ -29,18 +39,29 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
+  // Group Management states
+  const [isGroupManagerOpen, setIsGroupManagerOpen] = useState(false);
+  const [isCreatingNewGroup, setIsCreatingNewGroup] = useState(false);
+  const [newGroupInput, setNewGroupInput] = useState('');
+
   if (!isOpen) return null;
 
-  // Group hosts by group_name
-  const groupedHosts = hosts.reduce<Record<string, DecryptedHost[]>>((acc, host) => {
-    if (search && !host.name.toLowerCase().includes(search.toLowerCase()) && !host.hostname.includes(search)) {
-      return acc;
-    }
-    const grp = host.group_name || '默认分组';
-    if (!acc[grp]) acc[grp] = [];
-    acc[grp].push(host);
+  const hostGroups = getHostGroups();
+
+  // Group hosts by group_name, ensuring all known groups appear in tree
+  const groupedHosts = hostGroups.reduce<Record<string, DecryptedHost[]>>((acc, grp) => {
+    acc[grp] = [];
     return acc;
   }, {});
+
+  for (const host of hosts) {
+    if (search && !host.name.toLowerCase().includes(search.toLowerCase()) && !host.hostname.includes(search)) {
+      continue;
+    }
+    const grp = host.group_name || '默认分组';
+    if (!groupedHosts[grp]) groupedHosts[grp] = [];
+    groupedHosts[grp].push(host);
+  }
 
   const toggleGroup = (grp: string) => {
     setCollapsedGroups((prev) => ({ ...prev, [grp]: !prev[grp] }));
@@ -61,28 +82,41 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
               <Server className="w-4 h-4 text-fs-accent" />
               <span>所有服务器 ({hosts.length})</span>
             </div>
-            <button
-              onClick={() => {
-                setEditingHost({
-                  id: '',
-                  user_id: '',
-                  name: '',
-                  group_name: '默认分组',
-                  hostname: '',
-                  port: 22,
-                  username: 'root',
-                  auth_type: 'password',
-                  credentials: { password: '' },
-                  sort_order: 0,
-                  updated_at: Date.now(),
-                });
-                setIsFormOpen(true);
-              }}
-              className="flex items-center space-x-1 rounded-lg bg-fs-primary hover:bg-fs-primaryHover px-2.5 py-1 text-xs text-white transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>新建主机</span>
-            </button>
+            <div className="flex items-center space-x-1.5">
+              <button
+                type="button"
+                onClick={() => setIsGroupManagerOpen(true)}
+                title="管理服务器分组"
+                className="flex items-center space-x-1 rounded-lg bg-fs-hover hover:bg-fs-active px-2 py-1 text-xs text-fs-textMuted hover:text-white transition-colors"
+              >
+                <FolderCog className="w-3.5 h-3.5 text-fs-warning" />
+                <span className="hidden sm:inline">分组</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingHost({
+                    id: '',
+                    user_id: '',
+                    name: '',
+                    group_name: hostGroups[0] || '默认分组',
+                    hostname: '',
+                    port: 22,
+                    username: 'root',
+                    auth_type: 'password',
+                    credentials: { password: '' },
+                    sort_order: 0,
+                    updated_at: Date.now(),
+                  });
+                  setIsCreatingNewGroup(false);
+                  setIsFormOpen(true);
+                }}
+                className="flex items-center space-x-1 rounded-lg bg-fs-primary hover:bg-fs-primaryHover px-2.5 py-1 text-xs text-white transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>新建主机</span>
+              </button>
+            </div>
           </div>
 
           <div className="p-2 border-b border-fs-border">
@@ -202,14 +236,85 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-fs-text mb-1">所属分组</label>
-                  <input
-                    type="text"
-                    placeholder="默认分组"
-                    value={editingHost.group_name}
-                    onChange={(e) => setEditingHost({ ...editingHost, group_name: e.target.value })}
-                    className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs text-fs-text">所属分组</label>
+                    <button
+                      type="button"
+                      onClick={() => setIsGroupManagerOpen(true)}
+                      className="text-[10px] text-fs-accent hover:underline flex items-center space-x-0.5"
+                    >
+                      <FolderCog className="w-3 h-3 inline" />
+                      <span>管理分组</span>
+                    </button>
+                  </div>
+                  {!isCreatingNewGroup ? (
+                    <div className="flex items-center space-x-1.5">
+                      <select
+                        value={editingHost.group_name || hostGroups[0] || '默认分组'}
+                        onChange={(e) => setEditingHost({ ...editingHost, group_name: e.target.value })}
+                        className="flex-1 rounded bg-fs-bg border border-fs-border px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+                      >
+                        {hostGroups.map((grp) => (
+                          <option key={grp} value={grp} className="bg-fs-surface text-white">
+                            {grp}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreatingNewGroup(true);
+                          setNewGroupInput('');
+                        }}
+                        className="rounded bg-fs-hover hover:bg-fs-active px-2 py-1.5 text-xs text-fs-accent whitespace-nowrap"
+                        title="创建新分组"
+                      >
+                        + 新建
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center space-x-1.5">
+                      <input
+                        type="text"
+                        autoFocus
+                        placeholder="新分组名称"
+                        value={newGroupInput}
+                        onChange={(e) => setNewGroupInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (newGroupInput.trim()) {
+                              addHostGroup(newGroupInput.trim());
+                              setEditingHost({ ...editingHost, group_name: newGroupInput.trim() });
+                              setIsCreatingNewGroup(false);
+                            }
+                          }
+                        }}
+                        className="flex-1 rounded bg-fs-bg border border-fs-border px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (newGroupInput.trim()) {
+                            addHostGroup(newGroupInput.trim());
+                            setEditingHost({ ...editingHost, group_name: newGroupInput.trim() });
+                          }
+                          setIsCreatingNewGroup(false);
+                        }}
+                        className="rounded bg-fs-primary hover:bg-fs-primaryHover px-2 py-1.5 text-xs text-white whitespace-nowrap"
+                      >
+                        确定
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsCreatingNewGroup(false)}
+                        className="rounded bg-fs-hover hover:bg-fs-active px-1.5 py-1.5 text-xs text-fs-textMuted"
+                        title="取消"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs text-fs-text mb-1">SSH 端口</label>
@@ -332,6 +437,18 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
           )}
         </div>
       </div>
+
+      <GroupManagerModal
+        isOpen={isGroupManagerOpen}
+        onClose={() => setIsGroupManagerOpen(false)}
+        title="服务器分组管理"
+        groups={hostGroups}
+        items={hosts}
+        getItemGroup={(h) => h.group_name}
+        onAddGroup={(name) => addHostGroup(name)}
+        onRenameGroup={(oldName, newName) => renameHostGroup(oldName, newName)}
+        onDeleteGroup={(name, targetGroup) => deleteHostGroup(name, targetGroup)}
+      />
     </div>
   );
 };
