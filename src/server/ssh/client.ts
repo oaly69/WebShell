@@ -137,9 +137,9 @@ export class SshClient {
         const char = String.fromCharCode(value[i]);
         line += char;
         if (line.endsWith('\r\n') || line.endsWith('\n')) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith('SSH-')) {
-            this.serverVersion = trimmed;
+          const cleaned = line.replace(/\r?\n$/, '');
+          if (cleaned.startsWith('SSH-')) {
+            this.serverVersion = cleaned;
             // Append any leftover bytes after version line into TCP buffer
             const remainingBytes = value.subarray(i + 1);
             if (remainingBytes.length > 0) {
@@ -175,9 +175,17 @@ export class SshClient {
         }
       }
     } catch (err: any) {
-      this.close(`Read error: ${err.message}`);
+      if (!this.isClosed) {
+        const msg = err.message || '';
+        const friendly = msg.includes('Stream was cancelled')
+          ? '远程服务器中断或重置了连接'
+          : `连接异常: ${msg}`;
+        this.close(friendly);
+      }
     } finally {
-      this.close('Socket closed');
+      if (!this.isClosed) {
+        this.close('远程服务器已关闭连接');
+      }
     }
   }
 
@@ -502,26 +510,25 @@ export class SshClient {
   }
 
   private async handleAuthSuccess(): Promise<void> {
-    try {
-      // Open Channel 0 for interactive Shell and resolve connect() once confirmed
-      await this.openChannel('shell');
-      if (this.connectResolve) {
-        const resolve = this.connectResolve;
-        this.connectResolve = null;
-        this.connectReject = null;
-        resolve();
-      }
-    } catch (err: any) {
-      if (this.connectReject) {
-        const reject = this.connectReject;
-        this.connectResolve = null;
-        this.connectReject = null;
-        reject(err);
-      }
-    }
+    console.log('[SSH] 认证成功 (USERAUTH_SUCCESS)，正在发送 shell 通道开启请求...');
+    // Open Channel 0 for interactive Shell without blocking the packet processing loop
+    const localId = this.nextLocalChannelId++;
+    const initialWindow = 2 * 1024 * 1024; // 2MB window
+    const maxPacket = 32768;
+
+    this.shellChannel = { localId, remoteId: 0, remoteWindow: 0, remoteMaxPacket: 0 };
+
+    const writer = new SshPacketWriter();
+    writer.writeByte(SSH_MSG.CHANNEL_OPEN);
+    writer.writeString('session');
+    writer.writeUint32(localId);
+    writer.writeUint32(initialWindow);
+    writer.writeUint32(maxPacket);
+
+    await this.sendPacket(writer);
   }
 
-  // Open Channels (shell, exec, or sftp) and wait until CHANNEL_OPEN_CONFIRMATION + initial request are sent
+  // Open Channels (exec or sftp) called from outside the packet loop
   public async openChannel(type: 'shell' | 'exec' | 'sftp', execCommand?: string): Promise<number> {
     const localId = this.nextLocalChannelId++;
     const initialWindow = 2 * 1024 * 1024; // 2MB window
@@ -560,6 +567,7 @@ export class SshClient {
     this.pendingChannels.delete(localId);
 
     if (this.shellChannel && this.shellChannel.localId === localId) {
+      console.log(`[SSH] Shell 通道确认成功 (local=${localId}, remote=${remoteId})，正在请求 PTY 与 Shell...`);
       this.shellChannel.remoteId = remoteId;
       this.shellChannel.remoteWindow = remoteWindow;
       this.shellChannel.remoteMaxPacket = remoteMaxPacket;
@@ -585,6 +593,15 @@ export class SshClient {
       shellReq.writeString('shell');
       shellReq.writeBoolean(false);
       await this.sendPacket(shellReq);
+
+      // 3. Handshake complete! Resolve connect() promise now
+      if (this.connectResolve) {
+        console.log('[SSH] 握手与终端交互已全部就绪');
+        const resolve = this.connectResolve;
+        this.connectResolve = null;
+        this.connectReject = null;
+        resolve();
+      }
     } else if (this.execChannel && this.execChannel.localId === localId) {
       this.execChannel.remoteId = remoteId;
       this.execChannel.remoteWindow = remoteWindow;
@@ -700,7 +717,7 @@ export class SshClient {
       const paddingBytes = crypto.getRandomValues(new Uint8Array(paddingLen));
 
       const unencrypted = new Uint8Array(4 + packetLen);
-      const view = new DataView(unencrypted.buffer);
+      const view = new DataView(unencrypted.buffer, unencrypted.byteOffset, unencrypted.byteLength);
       view.setUint32(0, packetLen);
       view.setUint8(4, paddingLen);
       unencrypted.set(payloadBytes, 5);
