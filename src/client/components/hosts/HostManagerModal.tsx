@@ -4,6 +4,7 @@ import { useSessionStore } from '../../store/useSessionStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import type { DecryptedHost } from '@shared/types';
 import { GroupManagerModal } from '../common/GroupManagerModal';
+import { FinalShellImportModal } from './FinalShellImportModal';
 import {
   Server,
   Plus,
@@ -18,6 +19,7 @@ import {
   FolderCog,
   AlertCircle,
   Loader2,
+  Upload,
 } from 'lucide-react';
 
 interface HostManagerModalProps {
@@ -50,6 +52,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
   const [isGroupManagerOpen, setIsGroupManagerOpen] = useState(false);
   const [isCreatingNewGroup, setIsCreatingNewGroup] = useState(false);
   const [newGroupInput, setNewGroupInput] = useState('');
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -152,6 +155,15 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
               <span>所有服务器 ({hosts.length})</span>
             </div>
             <div className="flex items-center space-x-1.5">
+              <button
+                type="button"
+                onClick={() => setIsImportModalOpen(true)}
+                title="导入从 FinalShell 导出的服务器配置"
+                className="flex items-center space-x-1 rounded-lg bg-fs-hover hover:bg-fs-active px-2 py-1 text-xs text-fs-accent hover:text-fs-text transition-colors"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">导入</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setIsGroupManagerOpen(true)}
@@ -518,6 +530,12 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
         onAddGroup={(name) => addHostGroup(name)}
         onRenameGroup={(oldName, newName) => renameHostGroup(oldName, newName)}
         onDeleteGroup={(name, targetGroup) => deleteHostGroup(name, targetGroup)}
+      />
+
+      <FinalShellImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onSuccess={() => fetchHosts()}
       />
     </div>
   );

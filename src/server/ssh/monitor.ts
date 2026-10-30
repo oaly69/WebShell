@@ -4,11 +4,21 @@ export const MONITOR_SHELL_COMMAND = `
 while true; do
   echo "---FS_METRIC_START---"
   date +%s
+  echo "===FS_LOAD==="
   cat /proc/loadavg 2>/dev/null
+  echo "===FS_MEM==="
   grep -h -E '^(cpu |MemTotal|MemFree|MemAvailable|Buffers|Cached|SwapTotal|SwapFree)' /proc/meminfo /proc/stat 2>/dev/null
+  echo "===FS_NET==="
   cat /proc/net/dev 2>/dev/null
-  df -P -B1 -x tmpfs -x devtmpfs -x squashfs 2>/dev/null
-  ps -eo pid,user,pcpu,pmem,comm --sort=-pcpu 2>/dev/null | head -n 11
+  echo "===FS_DF==="
+  df -kP 2>/dev/null || df -k 2>/dev/null || df 2>/dev/null
+  echo "===FS_PS==="
+  (ps -eo pid,user,pcpu,pmem,comm --sort=-pcpu 2>/dev/null || ps aux 2>/dev/null || ps 2>/dev/null) | head -n 15
+  echo "===FS_SYS==="
+  cat /etc/os-release 2>/dev/null | grep -E '^(PRETTY_NAME|NAME)=' | head -n 1
+  uname -s -r -m 2>/dev/null
+  cat /etc/hostname 2>/dev/null || uname -n 2>/dev/null
+  cat /proc/uptime 2>/dev/null
   echo "---FS_METRIC_END---"
   sleep 2
 done
@@ -31,22 +41,27 @@ export class MetricsParser {
 
   public parseBlock(blockText: string): SystemMetrics | null {
     try {
-      const lines = blockText.trim().split('\n');
-      if (lines.length < 5) return null;
+      // Split block by custom section delimiters
+      const rawTimestamp = blockText.match(/---FS_METRIC_START---\s*\n\s*(\d+)/);
+      const timestamp = rawTimestamp ? parseInt(rawTimestamp[1], 10) * 1000 : Date.now();
 
-      const timestamp = parseInt(lines[0], 10) * 1000 || Date.now();
-      let lineIdx = 1;
+      // Extract section texts
+      const getSection = (name: string): string => {
+        const regex = new RegExp(`===${name}===([\\s\\S]*?)(?=(===FS_|---FS_METRIC_END---|$))`);
+        const match = blockText.match(regex);
+        return match ? match[1].trim() : '';
+      };
 
       // 1. Load Average
-      const loadLine = lines[lineIdx++];
-      const loadParts = loadLine.trim().split(/\s+/);
-      const loadAvg: [number, number, number] = [
-        parseFloat(loadParts[0]) || 0,
-        parseFloat(loadParts[1]) || 0,
-        parseFloat(loadParts[2]) || 0,
-      ];
+      let loadAvg: [number, number, number] = [0, 0, 0];
+      const loadSection = getSection('FS_LOAD') || (blockText.includes('===FS_') ? '' : blockText);
+      const loadMatch = loadSection.match(/(\d+\.\d+)\s+(\d+\.\d+)\s+(\d+\.\d+)/);
+      if (loadMatch) {
+        loadAvg = [parseFloat(loadMatch[1]) || 0, parseFloat(loadMatch[2]) || 0, parseFloat(loadMatch[3]) || 0];
+      }
 
       // 2. Memory & CPU lines
+      const memSection = getSection('FS_MEM') || blockText;
       let memTotal = 0;
       let memFree = 0;
       let memAvail = 0;
@@ -56,28 +71,22 @@ export class MetricsParser {
       let swapFree = 0;
       let currentCpu: CpuTimes | null = null;
 
-      while (lineIdx < lines.length) {
-        const rawLine = lines[lineIdx].trim();
-        // Strip optional filename prefix just in case busybox grep ignores -h
+      for (const rawLine of memSection.split('\n')) {
         const line = rawLine.replace(/^\/proc\/[a-z]+:/, '').trim();
-        if (line.startsWith('Inter-|') || line.startsWith('face |') || line.startsWith('Filesystem')) {
-          break;
-        }
-
         if (line.startsWith('MemTotal:')) {
-          memTotal = parseInt(line.replace(/[^0-9]/g, ''), 10) * 1024;
+          memTotal = (parseInt(line.replace(/[^0-9]/g, ''), 10) || 0) * 1024;
         } else if (line.startsWith('MemFree:')) {
-          memFree = parseInt(line.replace(/[^0-9]/g, ''), 10) * 1024;
+          memFree = (parseInt(line.replace(/[^0-9]/g, ''), 10) || 0) * 1024;
         } else if (line.startsWith('MemAvailable:')) {
-          memAvail = parseInt(line.replace(/[^0-9]/g, ''), 10) * 1024;
+          memAvail = (parseInt(line.replace(/[^0-9]/g, ''), 10) || 0) * 1024;
         } else if (line.startsWith('Buffers:')) {
-          memBuffers = parseInt(line.replace(/[^0-9]/g, ''), 10) * 1024;
+          memBuffers = (parseInt(line.replace(/[^0-9]/g, ''), 10) || 0) * 1024;
         } else if (line.startsWith('Cached:')) {
-          memCached = parseInt(line.replace(/[^0-9]/g, ''), 10) * 1024;
+          memCached = (parseInt(line.replace(/[^0-9]/g, ''), 10) || 0) * 1024;
         } else if (line.startsWith('SwapTotal:')) {
-          swapTotal = parseInt(line.replace(/[^0-9]/g, ''), 10) * 1024;
+          swapTotal = (parseInt(line.replace(/[^0-9]/g, ''), 10) || 0) * 1024;
         } else if (line.startsWith('SwapFree:')) {
-          swapFree = parseInt(line.replace(/[^0-9]/g, ''), 10) * 1024;
+          swapFree = (parseInt(line.replace(/[^0-9]/g, ''), 10) || 0) * 1024;
         } else if (line.startsWith('cpu ')) {
           const p = line.split(/\s+/);
           currentCpu = {
@@ -91,7 +100,6 @@ export class MetricsParser {
             steal: parseInt(p[8], 10) || 0,
           };
         }
-        lineIdx++;
       }
 
       if (memAvail === 0 && (memFree > 0 || memBuffers > 0 || memCached > 0)) {
@@ -146,11 +154,10 @@ export class MetricsParser {
       const swapPercent = swapTotal > 0 ? Math.round((swapUsed / swapTotal) * 100) : 0;
 
       // 3. Network Interfaces (/proc/net/dev)
+      const netSection = getSection('FS_NET');
       let totalRx = 0;
       let totalTx = 0;
-      while (lineIdx < lines.length) {
-        const line = lines[lineIdx].trim();
-        if (line.startsWith('Filesystem')) break;
+      for (const line of netSection.split('\n')) {
         if (line.includes(':')) {
           const parts = line.split(':');
           const iface = parts[0].trim();
@@ -160,7 +167,6 @@ export class MetricsParser {
             totalTx += parseInt(stats[8], 10) || 0;
           }
         }
-        lineIdx++;
       }
 
       let rxSpeed = 0;
@@ -173,49 +179,140 @@ export class MetricsParser {
       }
       this.prevNet = { rx: totalRx, tx: totalTx, time: nowSec };
 
-      // 4. Disks (df)
+      // 4. Disks (df -kP or df -k)
+      const dfSection = getSection('FS_DF');
       const disks: SystemMetrics['disks'] = [];
-      while (lineIdx < lines.length) {
-        const line = lines[lineIdx].trim();
-        if (line.startsWith('PID') || line.includes('%CPU')) break;
-        if (!line.startsWith('Filesystem') && line.length > 0) {
-          const p = line.split(/\s+/);
-          if (p.length >= 6) {
-            const size = parseInt(p[1], 10) || 0;
-            const used = parseInt(p[2], 10) || 0;
-            const avail = parseInt(p[3], 10) || 0;
-            const percent = parseInt(p[4].replace('%', ''), 10) || 0;
+      const ignoredFs = new Set(['tmpfs', 'devtmpfs', 'squashfs', 'udev', 'none', 'overlay', 'shm', 'run']);
+
+      const dfLines = dfSection.split('\n');
+      for (let i = 0; i < dfLines.length; i++) {
+        let line = dfLines[i].trim();
+        if (!line || line.startsWith('Filesystem') || line.startsWith('文件系统')) continue;
+
+        let p = line.split(/\s+/);
+        // If filesystem name is on its own line (common in some df outputs when device path is long)
+        if (p.length === 1 && i + 1 < dfLines.length) {
+          i++;
+          p = [p[0], ...dfLines[i].trim().split(/\s+/)];
+        }
+
+        if (p.length >= 6) {
+          const fs = p[0];
+          const mount = p[p.length - 1];
+          // Skip pseudo filesystems unless it's root mount
+          if (ignoredFs.has(fs) && mount !== '/') continue;
+
+          // Units in 1K blocks -> multiply by 1024 to get bytes
+          const sizeKb = parseInt(p[1], 10) || 0;
+          const usedKb = parseInt(p[2], 10) || 0;
+          const availKb = parseInt(p[3], 10) || 0;
+          const percentStr = p[4] || p[p.length - 2];
+          const percent = parseInt(percentStr.replace('%', ''), 10) || 0;
+
+          if (sizeKb > 0) {
             disks.push({
-              fs: p[0],
+              fs,
               type: 'ext4',
-              size,
-              used,
-              avail,
+              size: sizeKb * 1024,
+              used: usedKb * 1024,
+              avail: availKb * 1024,
               percent,
-              mount: p[5],
+              mount,
             });
           }
         }
-        lineIdx++;
       }
 
       // 5. Processes (ps)
+      const psSection = getSection('FS_PS');
       const procs: SystemMetrics['procs'] = [];
-      while (lineIdx < lines.length) {
-        const line = lines[lineIdx].trim();
-        if (!line.startsWith('PID') && !line.includes('%CPU') && line.length > 0) {
-          const p = line.split(/\s+/);
-          if (p.length >= 5) {
-            procs.push({
-              pid: parseInt(p[0], 10) || 0,
-              user: p[1],
-              cpu: parseFloat(p[2]) || 0,
-              mem: parseFloat(p[3]) || 0,
-              command: p.slice(4).join(' '),
-            });
+      const psLines = psSection.split('\n');
+
+      let isHeader = true;
+      for (const rawLine of psLines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        // Detect header
+        if (isHeader && (line.includes('PID') || line.includes('%CPU') || line.includes('COMMAND'))) {
+          isHeader = false;
+          continue;
+        }
+
+        const p = line.split(/\s+/);
+        // Supports both `ps -eo pid,user,pcpu,pmem,comm` (5+ fields) and `ps aux` (11+ fields)
+        if (p.length >= 5) {
+          // Check if first column is numeric PID
+          if (/^\d+$/.test(p[0])) {
+            // `ps -eo pid,user,pcpu,pmem,comm`
+            const pid = parseInt(p[0], 10) || 0;
+            const user = p[1];
+            const cpu = parseFloat(p[2]) || 0;
+            const mem = parseFloat(p[3]) || 0;
+            const command = p.slice(4).join(' ');
+            procs.push({ pid, user, cpu, mem, command });
+          } else if (p.length >= 11 && /^\d+$/.test(p[1])) {
+            // `ps aux` -> user, pid, %cpu, %mem, vsz, rss, tty, stat, start, time, command
+            const user = p[0];
+            const pid = parseInt(p[1], 10) || 0;
+            const cpu = parseFloat(p[2]) || 0;
+            const mem = parseFloat(p[3]) || 0;
+            const command = p.slice(10).join(' ');
+            procs.push({ pid, user, cpu, mem, command });
           }
         }
-        lineIdx++;
+      }
+
+      // 6. System Information (sys)
+      const sysSection = getSection('FS_SYS');
+      let sysInfo: SystemMetrics['sys'] = undefined;
+      if (sysSection) {
+        let os = '';
+        let kernel = '';
+        let arch = '';
+        let hostname = '';
+        let uptimeStr = '';
+
+        const sysLines = sysSection.split('\n').map((l) => l.trim()).filter(Boolean);
+        for (const line of sysLines) {
+          if (line.startsWith('PRETTY_NAME=') || line.startsWith('NAME=')) {
+            os = line.replace(/^(PRETTY_NAME|NAME)=/, '').replace(/^["']|["']$/g, '');
+          } else if (line.includes('Linux') || line.includes('Darwin') || line.includes('BSD')) {
+            const uparts = line.split(/\s+/);
+            if (uparts.length >= 3) {
+              kernel = uparts[1] || '';
+              arch = uparts[2] || '';
+            } else {
+              kernel = line;
+            }
+          } else if (/^\d+(\.\d+)?\s+\d+/.test(line)) {
+            // /proc/uptime: e.g. "345678.90 123456.78"
+            const totalSeconds = parseFloat(line.split(/\s+/)[0]) || 0;
+            const days = Math.floor(totalSeconds / 86400);
+            const hours = Math.floor((totalSeconds % 86400) / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+            if (days > 0) {
+              uptimeStr = `${days}天 ${hours}小时 ${minutes}分`;
+            } else if (hours > 0) {
+              uptimeStr = `${hours}小时 ${minutes}分`;
+            } else {
+              uptimeStr = `${Math.max(1, minutes)}分钟`;
+            }
+          } else if (!hostname && line.length < 64 && !line.includes('/')) {
+            hostname = line;
+          }
+        }
+
+        if (os || kernel || arch || hostname || uptimeStr) {
+          sysInfo = {
+            os: os || 'Linux',
+            kernel,
+            arch,
+            hostname,
+            uptime: uptimeStr || '刚启动',
+          };
+        }
       }
 
       return {
@@ -243,6 +340,7 @@ export class MetricsParser {
         },
         disks,
         procs,
+        sys: sysInfo,
       };
     } catch {
       return null;

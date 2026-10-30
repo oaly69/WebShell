@@ -30,7 +30,12 @@ interface SyncStoreState {
   customSnippetCategories: string[];
 
   fetchHosts: () => Promise<void>;
-  saveHost: (host: Omit<DecryptedHost, 'updated_at'>) => Promise<void>;
+  saveHost: (
+    host: Omit<DecryptedHost, 'updated_at' | 'id' | 'user_id'> & {
+      id?: string;
+      user_id?: string;
+    }
+  ) => Promise<void>;
   deleteHost: (id: string) => Promise<void>;
   addHostGroup: (name: string) => void;
   renameHostGroup: (oldName: string, newName: string) => Promise<void>;

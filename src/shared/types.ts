@@ -105,6 +105,13 @@ export interface SystemMetrics {
     mem: number;
     command: string;
   }>;
+  sys?: {
+    os?: string;
+    kernel?: string;
+    arch?: string;
+    hostname?: string;
+    uptime?: string;
+  };
 }
 
 export interface SftpEntry {

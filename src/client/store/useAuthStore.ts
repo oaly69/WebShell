@@ -30,8 +30,28 @@ interface AuthStoreState {
 }
 
 const STORAGE_KEY_TOKEN = 'fs_token';
+const STORAGE_KEY_USER = 'fs_user';
 const STORAGE_KEY_VAULT = 'fs_vault_key';
 const SESSION_KEY_VAULT = 'fs_vault_key';
+
+const getCachedUser = (): UserProfile | null => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_USER);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+const saveUserToStorage = (user: UserProfile | null) => {
+  try {
+    if (user) {
+      localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user));
+    } else {
+      localStorage.removeItem(STORAGE_KEY_USER);
+    }
+  } catch {}
+};
 
 const saveVaultKey = (exported: string) => {
   try {
@@ -51,6 +71,7 @@ const getCachedVaultKey = (): string | null => {
 const clearAuthStorage = () => {
   try {
     localStorage.removeItem(STORAGE_KEY_TOKEN);
+    localStorage.removeItem(STORAGE_KEY_USER);
     localStorage.removeItem(STORAGE_KEY_VAULT);
     sessionStorage.removeItem(SESSION_KEY_VAULT);
   } catch {}
@@ -66,7 +87,7 @@ const triggerSyncFetch = async () => {
 
 export const useAuthStore = create<AuthStoreState>((set, get) => ({
   token: localStorage.getItem(STORAGE_KEY_TOKEN),
-  user: null,
+  user: getCachedUser(),
   isSystemInitialized: true,
   isChecking: true,
   masterKey: null,
@@ -103,6 +124,7 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
             }
           }
 
+          saveUserToStorage(meData.user);
           set({
             token: existingToken,
             user: meData.user,
@@ -159,6 +181,7 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
     } catch {}
 
     localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
+    saveUserToStorage(data.user);
     set({
       token: data.token,
       user: data.user,
@@ -227,6 +250,7 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
     } catch {}
 
     localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
+    saveUserToStorage(data.user);
     set({
       token: data.token,
       user: data.user,

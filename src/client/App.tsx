@@ -34,8 +34,14 @@ export const App: React.FC = () => {
       setCanInstallPwa(true);
     };
 
+    const handleOpenSnippets = () => setIsSnippetsOpen(true);
+
     window.addEventListener('beforeinstallprompt', handleBeforeInstall);
-    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+    window.addEventListener('open-snippets', handleOpenSnippets);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+      window.removeEventListener('open-snippets', handleOpenSnippets);
+    };
   }, []);
 
   useEffect(() => {

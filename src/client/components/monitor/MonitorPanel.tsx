@@ -1,6 +1,6 @@
 import React from 'react';
 import type { SystemMetrics } from '@shared/types';
-import { Cpu, HardDrive, Wifi, Activity, Layers } from 'lucide-react';
+import { Cpu, HardDrive, Wifi, Activity, Layers, Server, Info, Clock } from 'lucide-react';
 
 interface MonitorPanelProps {
   metrics: SystemMetrics | null;
@@ -52,6 +52,51 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({ metrics, className =
       </div>
 
       <div className="flex-1 overflow-y-auto p-2.5 space-y-3 text-xs">
+        {/* 0. Server System Information (FinalShell 经典系统基本信息) */}
+        {metrics.sys && (
+          <div className="rounded-lg bg-fs-bg/60 p-2.5 border border-fs-border">
+            <div className="flex items-center space-x-1.5 font-medium text-fs-text mb-2">
+              <Server className="w-3.5 h-3.5 text-fs-accent" />
+              <span>系统信息</span>
+            </div>
+            <div className="space-y-1.5 text-[11px]">
+              {metrics.sys.os && (
+                <div className="flex justify-between items-center text-fs-text font-mono">
+                  <span className="text-fs-textMuted">操作系统</span>
+                  <span className="truncate max-w-[150px] font-medium" title={metrics.sys.os}>
+                    {metrics.sys.os}
+                  </span>
+                </div>
+              )}
+              {metrics.sys.hostname && (
+                <div className="flex justify-between items-center text-fs-text font-mono">
+                  <span className="text-fs-textMuted">主机名称</span>
+                  <span className="truncate max-w-[150px]" title={metrics.sys.hostname}>
+                    {metrics.sys.hostname}
+                  </span>
+                </div>
+              )}
+              {metrics.sys.kernel && (
+                <div className="flex justify-between items-center text-fs-text font-mono">
+                  <span className="text-fs-textMuted">内核版本</span>
+                  <span className="truncate max-w-[150px] text-[10px]" title={metrics.sys.kernel}>
+                    {metrics.sys.kernel} {metrics.sys.arch ? `(${metrics.sys.arch})` : ''}
+                  </span>
+                </div>
+              )}
+              {metrics.sys.uptime && (
+                <div className="flex justify-between items-center text-fs-text font-mono">
+                  <span className="text-fs-textMuted flex items-center space-x-1">
+                    <Clock className="w-3 h-3 inline" />
+                    <span>运行时间</span>
+                  </span>
+                  <span className="text-fs-accent font-medium">{metrics.sys.uptime}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* 1. CPU Section */}
         <div className="rounded-lg bg-fs-bg/60 p-2.5 border border-fs-border">
           <div className="flex items-center justify-between mb-1.5">
@@ -137,24 +182,28 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({ metrics, className =
             <HardDrive className="w-3.5 h-3.5 text-fs-primary" />
             <span>磁盘分区</span>
           </div>
-          <div className="space-y-2">
-            {(metrics.disks || []).map((d, idx) => (
-              <div key={idx} className="text-[10px]">
-                <div className="flex justify-between text-fs-text mb-0.5">
-                  <span className="font-mono truncate max-w-[120px] font-medium">{d.mount}</span>
-                  <span className="text-fs-textMuted font-mono">
-                    {formatBytes(d.used)} / {formatBytes(d.size)}
-                  </span>
+          {(!metrics.disks || metrics.disks.length === 0) ? (
+            <div className="text-center py-2 text-[10px] text-fs-textMuted">暂未检测到独立挂载分区</div>
+          ) : (
+            <div className="space-y-2">
+              {metrics.disks.map((d, idx) => (
+                <div key={idx} className="text-[10px]">
+                  <div className="flex justify-between text-fs-text mb-0.5">
+                    <span className="font-mono truncate max-w-[120px] font-medium">{d.mount}</span>
+                    <span className="text-fs-textMuted font-mono">
+                      {formatBytes(d.used)} / {formatBytes(d.size)}
+                    </span>
+                  </div>
+                  <div className="h-1 w-full rounded-full bg-fs-surface overflow-hidden">
+                    <div
+                      className={`h-full ${d.percent > 90 ? 'bg-fs-danger' : 'bg-fs-primary'}`}
+                      style={{ width: `${d.percent}%` }}
+                    />
+                  </div>
                 </div>
-                <div className="h-1 w-full rounded-full bg-fs-surface overflow-hidden">
-                  <div
-                    className={`h-full ${d.percent > 90 ? 'bg-fs-danger' : 'bg-fs-primary'}`}
-                    style={{ width: `${d.percent}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* 5. Top Processes */}
@@ -163,28 +212,32 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({ metrics, className =
             <Activity className="w-3.5 h-3.5 text-fs-danger" />
             <span>Top 进程</span>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-[10px] font-mono text-left">
-              <thead>
-                <tr className="text-fs-textMuted border-b border-fs-border">
-                  <th className="pb-1">PID</th>
-                  <th className="pb-1">名称</th>
-                  <th className="pb-1 text-right">CPU%</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-fs-border/40 text-fs-text">
-                {(metrics.procs || []).slice(0, 6).map((p) => (
-                  <tr key={p.pid} className="hover:bg-fs-hover">
-                    <td className="py-1 text-fs-textMuted">{p.pid}</td>
-                    <td className="py-1 truncate max-w-[80px]" title={p.command}>
-                      {p.command}
-                    </td>
-                    <td className="py-1 text-right text-fs-danger">{(p.cpu || 0).toFixed(1)}%</td>
+          {(!metrics.procs || metrics.procs.length === 0) ? (
+            <div className="text-center py-2 text-[10px] text-fs-textMuted">暂未获取到活跃进程列表</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[10px] font-mono text-left">
+                <thead>
+                  <tr className="text-fs-textMuted border-b border-fs-border">
+                    <th className="pb-1">PID</th>
+                    <th className="pb-1">名称</th>
+                    <th className="pb-1 text-right">CPU%</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-fs-border/40 text-fs-text">
+                  {metrics.procs.slice(0, 6).map((p) => (
+                    <tr key={p.pid} className="hover:bg-fs-hover">
+                      <td className="py-1 text-fs-textMuted">{p.pid}</td>
+                      <td className="py-1 truncate max-w-[80px]" title={p.command}>
+                        {p.command}
+                      </td>
+                      <td className="py-1 text-right text-fs-danger">{(p.cpu || 0).toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </div>

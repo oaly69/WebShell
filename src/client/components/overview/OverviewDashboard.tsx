@@ -3,6 +3,7 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { useSyncStore } from '../../store/useSyncStore';
 import { useSessionStore } from '../../store/useSessionStore';
 import type { DecryptedHost } from '@shared/types';
+import { FinalShellImportModal } from '../hosts/FinalShellImportModal';
 import {
   Server,
   Terminal,
@@ -17,6 +18,7 @@ import {
   Download,
   Users,
   Cpu,
+  Upload,
 } from 'lucide-react';
 
 interface OverviewDashboardProps {
@@ -40,6 +42,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
 
   const [search, setSearch] = useState('');
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   // Compute all groups including custom created ones
   const groups = getHostGroups();
@@ -73,15 +76,17 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                   <h1 className="text-lg sm:text-xl font-bold text-fs-text tracking-wide">
                     FinalShell 边缘控制台
                   </h1>
-                  <span
-                    className={`text-[10px] sm:text-xs font-mono px-2 py-0.5 rounded-full ${
-                      user?.role === 'admin'
-                        ? 'bg-fs-warning/15 text-fs-warning border border-fs-warning/30'
-                        : 'bg-fs-primary/15 text-fs-info border border-fs-primary/30'
-                    }`}
-                  >
-                    {user?.role === 'admin' ? '超级管理员' : '普通成员'}
-                  </span>
+                  {user && (
+                    <span
+                      className={`text-[10px] sm:text-xs font-mono px-2 py-0.5 rounded-full ${
+                        user.role === 'admin'
+                          ? 'bg-fs-warning/15 text-fs-warning border border-fs-warning/30'
+                          : 'bg-fs-primary/15 text-fs-info border border-fs-primary/30'
+                      }`}
+                    >
+                      {user.role === 'admin' ? '超级管理员' : '普通成员'}
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-fs-textMuted mt-1">
                   Cloudflare Workers 原生运行 · 纯 TS 协议栈 · 客户端 E2EE 绝对隐私隔离
@@ -96,6 +101,15 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               >
                 <Plus className="w-4 h-4" />
                 <span>新建服务器</span>
+              </button>
+
+              <button
+                onClick={() => setIsImportModalOpen(true)}
+                className="flex items-center space-x-1.5 rounded-xl bg-fs-surface hover:bg-fs-hover border border-fs-border px-3.5 py-2 text-xs font-medium text-fs-accent transition-colors"
+                title="导入从 FinalShell 导出的服务器配置 (JSON)"
+              >
+                <Upload className="w-4 h-4" />
+                <span>导入 FinalShell</span>
               </button>
 
               {user?.role === 'admin' && (
@@ -339,6 +353,11 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
           </div>
         )}
       </div>
+
+      <FinalShellImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+      />
     </div>
   );
 };
