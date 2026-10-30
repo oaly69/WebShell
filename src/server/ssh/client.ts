@@ -63,8 +63,14 @@ export function normalizeHostAddress(rawHost: string, defaultPort: number = 22):
 }
 
 export function formatSocketError(msg: string, host?: string, port?: number): string {
-  const isIpv6 = host && (host.includes(':') || host.includes('::'));
-  const targetStr = host ? `${host}:${port || 22}` : '';
+  const isIpv6 = host && (host.includes(':') || host.includes('::') || host.includes('['));
+  const targetStr = host
+    ? host.includes(':') && !host.includes(']:') && !host.startsWith('[')
+      ? `[${host}]:${port || 22}`
+      : host.includes(':')
+      ? host
+      : `${host}:${port || 22}`
+    : '';
 
   if (
     msg.includes('Stream was cancelled') ||
@@ -75,6 +81,16 @@ export function formatSocketError(msg: string, host?: string, port?: number): st
       return `连接被远程主机中断 (Stream was cancelled)。\n目标主机为 IPv6 (${targetStr})，请检查：\n1. 目标服务器 SSH 服务是否在 IPv6 监听（检查 /etc/ssh/sshd_config 的 ListenAddress :: 或 AddressFamily any）；\n2. 云服务商安全组及系统防火墙 (ufw/ip6tables) 是否放行了 IPv6 的 ${port || 22} 端口；\n3. 目标机器 IPv6 网络是否通畅且允许外部公网访问。`;
     }
     return `远程服务器重置或中断了连接 (Stream was cancelled)。请检查目标服务器 SSH 服务是否正常运行及防火墙设置。`;
+  }
+
+  if (
+    msg.includes('proxy request failed') ||
+    msg.includes('cannot connect to the specified address')
+  ) {
+    if (isIpv6) {
+      return `无法连接到目标 IPv6 服务器 (${targetStr})。\n排查指引：\n1. 确认该 IPv6 为公网可路由地址（若是家庭宽带内网或链路本地 fe80::、ULA fc00::/fd00::，Cloudflare 公网节点无法跨局域网直接访问，需使用公网 IPv6 或配置穿透）；\n2. 检查服务器 sshd_config 配置是否启用了 IPv6 监听（ListenAddress ::）；\n3. 检查云服务商安全组及服务器防火墙 (ufw/iptables/nftables) 是否已放行 IPv6 ${port || 22} 入方向端口。`;
+    }
+    return `无法连接到目标服务器 (${targetStr})。请检查目标 IP/域名、端口及网络与防火墙设置。`;
   }
 
   if (msg.includes('Connection refused') || msg.includes('refused')) {
@@ -143,9 +159,16 @@ export class SshClient {
       this.options.port
     );
 
+    // Format target address for Cloudflare Workers connect() API:
+    // If the address is IPv6 (contains colons), workerd REQUIRES square brackets "[...]"
+    // Without brackets, workerd throws "proxy request failed, cannot connect to the specified address" (WSAEADDRNOTAVAIL 10049)
+    const isIpv6 = cleanHost.includes(':');
+    const connectHost = isIpv6 ? `[${cleanHost.replace(/^\[|\]$/g, '')}]` : cleanHost;
+    const targetDisplay = isIpv6 ? `${connectHost}:${cleanPort}` : `${cleanHost}:${cleanPort}`;
+
     try {
       this.socket = connect({
-        hostname: cleanHost,
+        hostname: connectHost,
         port: cleanPort,
       });
 
@@ -154,7 +177,7 @@ export class SshClient {
         this.socket.closed.catch((err: any) => {
           if (!this.isClosed) {
             const errMsg = err?.message || '';
-            this.close(formatSocketError(errMsg, cleanHost, cleanPort));
+            this.close(formatSocketError(errMsg, targetDisplay, cleanPort));
           }
         });
       }
@@ -166,7 +189,7 @@ export class SshClient {
           openTimeoutId = setTimeout(() => {
             reject(
               new Error(
-                `TCP 连接超时 (10s)。无法连接到 ${cleanHost}:${cleanPort}，请检查目标服务器是否开机、防火墙/安全组是否放行。`
+                `TCP 连接超时 (10s)。无法连接到 ${targetDisplay}，请检查目标服务器是否开机、防火墙/安全组是否放行。`
               )
             );
           }, 10000);
@@ -177,7 +200,7 @@ export class SshClient {
             clearTimeout(openTimeoutId);
           });
         } catch (openErr: any) {
-          throw new Error(formatSocketError(openErr?.message || '无法建立 TCP 连接', cleanHost, cleanPort));
+          throw new Error(formatSocketError(openErr?.message || '无法建立 TCP 连接', targetDisplay, cleanPort));
         }
       }
 
@@ -212,7 +235,7 @@ export class SshClient {
         clearTimeout(timeoutId);
       }
     } catch (err: any) {
-      this.close(formatSocketError(err.message || '', cleanHost, cleanPort));
+      this.close(formatSocketError(err.message || '', targetDisplay, cleanPort));
       throw err;
     }
   }
