@@ -13,14 +13,29 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-// Convert Base64 to Uint8Array
+// Convert Base64 to Uint8Array safely
 export function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
+  if (!base64 || typeof base64 !== 'string') {
+    throw new Error('Base64 字符串无效或为空');
   }
-  return bytes;
+
+  // Remove potential whitespace, newlines, and normalize URL-safe characters
+  let clean = base64.trim().replace(/-/g, '+').replace(/_/g, '/');
+  // Pad with '=' if necessary
+  while (clean.length % 4 !== 0) {
+    clean += '=';
+  }
+
+  try {
+    const binary = atob(clean);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  } catch (err: any) {
+    throw new Error(`Base64 解码失败: ${err.message || '格式错误'}`);
+  }
 }
 
 // Derive a 256-bit CryptoKey from password and salt using PBKDF2
@@ -128,10 +143,10 @@ export async function unlockVault(
   try {
     const check = await decryptText(masterKey, verifierCipher);
     if (check !== VERIFIER_PLAINTEXT) {
-      throw new Error('Master password incorrect');
+      throw new Error('密码错误，请重新输入');
     }
-  } catch {
-    throw new Error('Master password incorrect');
+  } catch (err: any) {
+    throw new Error('密码错误或密文验证失败');
   }
 
   return masterKey;

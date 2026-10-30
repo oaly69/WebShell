@@ -1,3 +1,19 @@
+export interface UserProfile {
+  id: string;
+  username: string;
+  role: 'admin' | 'user';
+  status: 'active' | 'disabled';
+  created_at: number;
+}
+
+export interface AuthSession {
+  token: string;
+  user: UserProfile;
+  kdf_salt: string; // Base64
+  kdf_iterations: number;
+  verifier_cipher: string; // AES-GCM ciphertext
+}
+
 export interface VaultMeta {
   id: string; // 'default'
   kdf_salt: string; // Base64
@@ -14,13 +30,14 @@ export interface HostCredentials {
 
 export interface HostRecord {
   id: string;
+  user_id: string;
   name: string;
   group_name: string;
   hostname: string;
   port: number;
   username: string;
   auth_type: 'password' | 'private_key';
-  encrypted_cred: string; // AES-GCM ciphertext of JSON-stringified HostCredentials
+  encrypted_cred: string; // AES-256-GCM ciphertext of JSON-stringified HostCredentials
   jump_host_id?: string | null;
   keepalive_interval?: number;
   sort_order: number;
@@ -34,6 +51,7 @@ export interface DecryptedHost extends Omit<HostRecord, 'encrypted_cred'> {
 
 export interface SnippetRecord {
   id: string;
+  user_id: string;
   title: string;
   category: string;
   command: string;
@@ -42,6 +60,7 @@ export interface SnippetRecord {
 }
 
 export interface UserSettingRecord {
+  user_id: string;
   key: string;
   value: string;
 }

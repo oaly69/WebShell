@@ -52,10 +52,10 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="flex h-[560px] w-full max-w-4xl overflow-hidden rounded-xl border border-fs-border bg-fs-surface shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-2 sm:p-4">
+      <div className="flex flex-col md:flex-row h-[90vh] sm:h-[560px] w-full max-w-4xl overflow-hidden rounded-2xl border border-fs-border bg-fs-surface shadow-2xl">
         {/* Left: Host Tree List */}
-        <div className="flex w-1/2 flex-col border-r border-fs-border bg-fs-bg/60">
+        <div className="flex w-full md:w-1/2 flex-col border-b md:border-b-0 md:border-r border-fs-border bg-fs-bg/60 h-1/2 md:h-full">
           <div className="flex items-center justify-between border-b border-fs-border p-3">
             <div className="flex items-center space-x-2 text-sm font-semibold text-white">
               <Server className="w-4 h-4 text-fs-accent" />
@@ -65,6 +65,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
               onClick={() => {
                 setEditingHost({
                   id: '',
+                  user_id: '',
                   name: '',
                   group_name: '默认分组',
                   hostname: '',
@@ -77,7 +78,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                 });
                 setIsFormOpen(true);
               }}
-              className="flex items-center space-x-1 rounded bg-fs-primary hover:bg-fs-primaryHover px-2.5 py-1 text-xs text-white transition-colors"
+              className="flex items-center space-x-1 rounded-lg bg-fs-primary hover:bg-fs-primaryHover px-2.5 py-1 text-xs text-white transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>新建主机</span>
@@ -168,7 +169,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
         </div>
 
         {/* Right: Add/Edit Host Form or Hint */}
-        <div className="flex w-1/2 flex-col bg-fs-surface">
+        <div className="flex w-full md:w-1/2 flex-col bg-fs-surface h-1/2 md:h-full">
           <div className="flex items-center justify-between border-b border-fs-border p-3">
             <h3 className="text-sm font-semibold text-white">
               {isFormOpen ? (editingHost?.id ? '编辑主机连接' : '新建主机连接') : '连接信息'}

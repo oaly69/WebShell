@@ -1,0 +1,18 @@
+{
+  "name": "Web FinalShell",
+  "short_name": "FinalShell",
+  "description": "基于 Cloudflare Workers 的网页版全功能 SSH 终端、SFTP 与无 Agent 监控客户端",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#181a1f",
+  "theme_color": "#21252b",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

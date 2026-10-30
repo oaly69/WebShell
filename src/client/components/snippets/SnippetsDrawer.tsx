@@ -47,6 +47,7 @@ export const SnippetsDrawer: React.FC<SnippetsDrawerProps> = ({ isOpen, onClose 
 
     await saveSnippet({
       id: '',
+      user_id: '',
       title: newTitle,
       category: newCategory,
       command: newCommand,
@@ -60,7 +61,7 @@ export const SnippetsDrawer: React.FC<SnippetsDrawerProps> = ({ isOpen, onClose 
   };
 
   return (
-    <div className="fixed inset-y-0 right-0 z-40 flex w-80 flex-col border-l border-fs-border bg-fs-surface shadow-2xl select-none">
+    <div className="fixed inset-y-0 right-0 z-40 flex w-full sm:w-80 flex-col border-l border-fs-border bg-fs-surface shadow-2xl select-none">
       {/* Header */}
       <div className="flex h-11 items-center justify-between border-b border-fs-border px-3 bg-fs-bg/60">
         <div className="flex items-center space-x-2 text-xs font-semibold text-white">

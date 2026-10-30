@@ -1,26 +1,16 @@
 import { create } from 'zustand';
-import type { DecryptedHost, HostRecord, SnippetRecord, VaultMeta } from '@shared/types';
+import type { DecryptedHost, HostRecord, SnippetRecord } from '@shared/types';
 import {
-  initVault,
-  unlockVault,
   encryptCredentials,
   decryptCredentials,
 } from '../crypto/vault';
+import { useAuthStore } from './useAuthStore';
 
 interface SyncStoreState {
-  isVaultReady: boolean;
-  isUnlocked: boolean;
-  vaultMeta: VaultMeta | null;
-  masterKey: CryptoKey | null;
-
   hosts: DecryptedHost[];
   snippets: SnippetRecord[];
   settings: Record<string, string>;
-
-  checkVaultStatus: () => Promise<void>;
-  setupVault: (masterPassword: string) => Promise<void>;
-  unlock: (masterPassword: string) => Promise<void>;
-  lock: () => void;
+  isLoading: boolean;
 
   fetchHosts: () => Promise<void>;
   saveHost: (host: Omit<DecryptedHost, 'updated_at'>) => Promise<void>;
@@ -32,84 +22,21 @@ interface SyncStoreState {
 }
 
 export const useSyncStore = create<SyncStoreState>((set, get) => ({
-  isVaultReady: false,
-  isUnlocked: false,
-  vaultMeta: null,
-  masterKey: null,
-
   hosts: [],
   snippets: [],
   settings: {},
-
-  checkVaultStatus: async () => {
-    try {
-      const res = await fetch('/api/vault/status');
-      const data = (await res.json()) as { initialized: boolean } & Partial<VaultMeta>;
-      if (data.initialized) {
-        set({ isVaultReady: true, vaultMeta: data as VaultMeta });
-      } else {
-        set({ isVaultReady: false, vaultMeta: null });
-      }
-    } catch {
-      set({ isVaultReady: false });
-    }
-  },
-
-  setupVault: async (masterPassword: string) => {
-    const { saltBase64, verifierCipher, masterKey } = await initVault(masterPassword);
-    const res = await fetch('/api/vault/init', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        salt: saltBase64,
-        iterations: 600000,
-        verifier: verifierCipher,
-      }),
-    });
-
-    if (!res.ok) throw new Error('Failed to initialize vault on server');
-
-    set({
-      isVaultReady: true,
-      isUnlocked: true,
-      masterKey,
-    });
-
-    await get().fetchHosts();
-    await get().fetchSnippets();
-  },
-
-  unlock: async (masterPassword: string) => {
-    const { vaultMeta } = get();
-    if (!vaultMeta) throw new Error('Vault not initialized');
-
-    const masterKey = await unlockVault(
-      masterPassword,
-      vaultMeta.kdf_salt,
-      vaultMeta.verifier_cipher,
-      vaultMeta.kdf_iterations
-    );
-
-    set({ isUnlocked: true, masterKey });
-
-    await get().fetchHosts();
-    await get().fetchSnippets();
-  },
-
-  lock: () => {
-    set({
-      isUnlocked: false,
-      masterKey: null,
-      hosts: [],
-    });
-  },
+  isLoading: false,
 
   fetchHosts: async () => {
-    const { masterKey } = get();
-    if (!masterKey) return;
+    const { token, masterKey } = useAuthStore.getState();
+    if (!token || !masterKey) return;
 
+    set({ isLoading: true });
     try {
-      const res = await fetch('/api/hosts');
+      const res = await fetch('/api/hosts', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Fetch hosts failed');
       const list = (await res.json()) as HostRecord[];
       const decrypted: DecryptedHost[] = [];
 
@@ -128,15 +55,16 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
         }
       }
 
-      set({ hosts: decrypted });
+      set({ hosts: decrypted, isLoading: false });
     } catch (err) {
       console.error('Fetch hosts failed', err);
+      set({ isLoading: false });
     }
   },
 
   saveHost: async (hostData) => {
-    const { masterKey, fetchHosts } = get();
-    if (!masterKey) throw new Error('Vault locked');
+    const { token, masterKey } = useAuthStore.getState();
+    if (!token || !masterKey) throw new Error('Please login first');
 
     const encrypted_cred = await encryptCredentials(masterKey, hostData.credentials);
 
@@ -160,44 +88,72 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
 
     const res = await fetch(url, {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify(payload),
     });
 
     if (!res.ok) throw new Error('Save host failed');
-    await fetchHosts();
+    await get().fetchHosts();
   },
 
   deleteHost: async (id: string) => {
-    await fetch(`/api/hosts/${id}`, { method: 'DELETE' });
+    const { token } = useAuthStore.getState();
+    if (!token) return;
+
+    await fetch(`/api/hosts/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
     await get().fetchHosts();
   },
 
   fetchSnippets: async () => {
+    const { token } = useAuthStore.getState();
+    if (!token) return;
+
     try {
-      const res = await fetch('/api/snippets');
-      const list = (await res.json()) as SnippetRecord[];
-      set({ snippets: list });
+      const res = await fetch('/api/snippets', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const list = (await res.json()) as SnippetRecord[];
+        set({ snippets: list });
+      }
     } catch (err) {
       console.error('Fetch snippets failed', err);
     }
   },
 
   saveSnippet: async (snippet) => {
+    const { token } = useAuthStore.getState();
+    if (!token) return;
+
     const isUpdate = !!snippet.id;
     const url = isUpdate ? `/api/snippets/${snippet.id}` : '/api/snippets';
     const method = isUpdate ? 'PUT' : 'POST';
 
     await fetch(url, {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify(snippet),
     });
     await get().fetchSnippets();
   },
 
   deleteSnippet: async (id: string) => {
-    await fetch(`/api/snippets/${id}`, { method: 'DELETE' });
+    const { token } = useAuthStore.getState();
+    if (!token) return;
+
+    await fetch(`/api/snippets/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
     await get().fetchSnippets();
   },
 }));

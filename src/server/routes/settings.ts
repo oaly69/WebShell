@@ -1,13 +1,30 @@
 import { Hono } from 'hono';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { getDb } from '../db';
 import { userSettings } from '../db/schema';
+import { verifyAuthToken, type AppVariables } from '../auth';
 
-export const settingsRouter = new Hono<{ Bindings: Env }>();
+export const settingsRouter = new Hono<{ Bindings: Env; Variables: AppVariables }>();
+
+// Auth Middleware for Settings
+settingsRouter.use('*', async (c, next) => {
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const token = authHeader.substring(7);
+  const payload = await verifyAuthToken(token);
+  if (!payload) {
+    return c.json({ error: 'Invalid or expired token' }, 401);
+  }
+  c.set('user', payload);
+  await next();
+});
 
 settingsRouter.get('/', async (c) => {
+  const user = c.get('user');
   const db = getDb(c.env.DB);
-  const rows = await db.select().from(userSettings);
+  const rows = await db.select().from(userSettings).where(eq(userSettings.user_id, user.sub));
   const settings: Record<string, string> = {};
   for (const row of rows) {
     settings[row.key] = row.value;
@@ -16,6 +33,7 @@ settingsRouter.get('/', async (c) => {
 });
 
 settingsRouter.post('/', async (c) => {
+  const user = c.get('user');
   const db = getDb(c.env.DB);
   const body = await c.req.json<{ key: string; value: string }>();
 
@@ -25,9 +43,9 @@ settingsRouter.post('/', async (c) => {
 
   await db
     .insert(userSettings)
-    .values({ key: body.key, value: body.value })
+    .values({ user_id: user.sub, key: body.key, value: body.value })
     .onConflictDoUpdate({
-      target: userSettings.key,
+      target: [userSettings.user_id, userSettings.key],
       set: { value: body.value },
     });
 

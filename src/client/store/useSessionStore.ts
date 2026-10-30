@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useAuthStore } from './useAuthStore';
 import type { DecryptedHost, SystemMetrics, SftpEntry } from '@shared/types';
 import {
   FrameType,
@@ -56,8 +57,9 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     const sessionId = crypto.randomUUID();
     const callbacks = new Set<(data: Uint8Array) => void>();
 
+    const { token } = useAuthStore.getState();
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/ssh?sessionId=${sessionId}`;
+    const wsUrl = `${protocol}//${window.location.host}/ws/ssh?sessionId=${sessionId}&token=${encodeURIComponent(token || '')}`;
     const ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
 
