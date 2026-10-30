@@ -44,6 +44,8 @@ export class SshClient {
   private sessionId: Uint8Array | null = null;
   private inCipher: SshCipherState | null = null;
   private outCipher: SshCipherState | null = null;
+  private inSeq: number = 0;
+  private outSeq: number = 0;
 
   private shellChannel: SshChannel | null = null;
   private execChannel: SshChannel | null = null;
@@ -54,6 +56,22 @@ export class SshClient {
 
   // Buffer for incoming raw TCP stream
   private incomingTcpBuffer = new Uint8Array(0);
+  private writeChain: Promise<void> = Promise.resolve();
+
+  // Handshake completion promise
+  private connectResolve: (() => void) | null = null;
+  private connectReject: ((err: Error) => void) | null = null;
+
+  // Pending channel open confirmations
+  private pendingChannels = new Map<
+    number,
+    {
+      type: 'shell' | 'exec' | 'sftp';
+      execCommand?: string;
+      resolve: (localId: number) => void;
+      reject: (err: Error) => void;
+    }
+  >();
 
   constructor(options: SshConnectOptions) {
     this.options = options;
@@ -69,14 +87,33 @@ export class SshClient {
       this.writer = this.socket.writable.getWriter();
       this.reader = this.socket.readable.getReader();
 
+      const handshakeComplete = new Promise<void>((resolve, reject) => {
+        this.connectResolve = resolve;
+        this.connectReject = reject;
+      });
+
       // 1. Handshake: Version Exchange
       await this.exchangeVersion();
 
-      // 2. Start TCP reading loop in background
+      // 2. Send KEXINIT before starting packet loop so clientKexInitBytes is ready
+      await this.sendKexInit();
+
+      // 3. Start TCP reading loop in background (processes any buffered bytes first)
       this.startPacketLoop();
 
-      // 3. Send KEXINIT
-      await this.sendKexInit();
+      // 4. Wait for KEX + UserAuth + Initial Shell Channel to complete (20s timeout)
+      let timeoutId: any;
+      const timeoutPromise = new Promise<void>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error('SSH 握手或认证超时 (20s)'));
+        }, 20000);
+      });
+
+      try {
+        await Promise.race([handshakeComplete, timeoutPromise]);
+      } finally {
+        clearTimeout(timeoutId);
+      }
     } catch (err: any) {
       this.close(`Connection failed: ${err.message}`);
       throw err;
@@ -126,6 +163,9 @@ export class SshClient {
   // Background loop reading from Cloudflare TCP socket
   private async startPacketLoop(): Promise<void> {
     try {
+      if (this.incomingTcpBuffer.length > 0) {
+        await this.processIncomingPackets();
+      }
       while (!this.isClosed) {
         const { value, done } = await this.reader.read();
         if (done) break;
@@ -142,7 +182,7 @@ export class SshClient {
   }
 
   private async processIncomingPackets(): Promise<void> {
-    while (this.incomingTcpBuffer.length > 0) {
+    while (this.incomingTcpBuffer.length > 0 && !this.isClosed) {
       let packetLength = 0;
       let paddingLength = 0;
       let payload: Uint8Array;
@@ -150,46 +190,62 @@ export class SshClient {
       if (!this.inCipher) {
         // Plaintext mode (during initial KEX)
         if (this.incomingTcpBuffer.length < 5) return;
-        const view = new DataView(this.incomingTcpBuffer.buffer, this.incomingTcpBuffer.byteOffset, 5);
+        const view = new DataView(
+          this.incomingTcpBuffer.buffer,
+          this.incomingTcpBuffer.byteOffset,
+          5
+        );
         packetLength = view.getUint32(0);
         paddingLength = view.getUint8(4);
+
+        if (packetLength > 262144 || packetLength < 2) {
+          throw new Error(`Invalid plaintext SSH packet length: ${packetLength}`);
+        }
 
         const totalNeeded = 4 + packetLength;
         if (this.incomingTcpBuffer.length < totalNeeded) return;
 
-        payload = this.incomingTcpBuffer.subarray(5, totalNeeded - paddingLength);
-        this.incomingTcpBuffer = this.incomingTcpBuffer.subarray(totalNeeded);
+        payload = this.incomingTcpBuffer.slice(5, totalNeeded - paddingLength);
+        this.incomingTcpBuffer = this.incomingTcpBuffer.slice(totalNeeded);
+        this.inSeq = (this.inSeq + 1) >>> 0;
       } else {
-        // Cipher mode: AES-CTR + HMAC-SHA2-256
+        // Cipher mode: AES-128-CTR + HMAC-SHA2-256
         const blockSize = 16;
         const macSize = 32;
-        if (this.incomingTcpBuffer.length < 4 + macSize) return;
+        if (this.incomingTcpBuffer.length < blockSize + macSize) return;
 
-        // Decrypt first 16 bytes to read packet_length
-        const initialChunk = this.incomingTcpBuffer.subarray(0, blockSize);
-        const decryptedFirst = await this.inCipher.decrypt(initialChunk);
-        const view = new DataView(decryptedFirst.buffer, decryptedFirst.byteOffset, 5);
-        packetLength = view.getUint32(0);
-        paddingLength = view.getUint8(4);
+        // Peek packet_length from first 16-byte block WITHOUT mutating IV or sequence number
+        const firstBlock = this.incomingTcpBuffer.subarray(0, blockSize);
+        packetLength = await this.inCipher.peekPacketLength(firstBlock);
+
+        if (packetLength > 524288 || packetLength < 2) {
+          throw new Error(`Invalid encrypted SSH packet length: ${packetLength}`);
+        }
 
         const totalNeeded = 4 + packetLength + macSize;
         if (this.incomingTcpBuffer.length < totalNeeded) return;
 
-        const remainingCiphertext = this.incomingTcpBuffer.subarray(blockSize, 4 + packetLength);
-        const decryptedRest = await this.inCipher.decrypt(remainingCiphertext);
+        const fullCiphertext = this.incomingTcpBuffer.subarray(0, 4 + packetLength);
+        const receivedMac = this.incomingTcpBuffer.subarray(4 + packetLength, totalNeeded);
 
-        const fullDecrypted = new Uint8Array(blockSize + decryptedRest.length);
-        fullDecrypted.set(decryptedFirst, 0);
-        fullDecrypted.set(decryptedRest, blockSize);
-
-        payload = fullDecrypted.subarray(5, 4 + packetLength - paddingLength);
-        this.incomingTcpBuffer = this.incomingTcpBuffer.subarray(totalNeeded);
+        const fullDecrypted = await this.inCipher.decryptPacket(fullCiphertext, receivedMac);
+        paddingLength = fullDecrypted[4];
+        payload = fullDecrypted.slice(5, 4 + packetLength - paddingLength);
+        this.incomingTcpBuffer = this.incomingTcpBuffer.slice(totalNeeded);
+        this.inSeq = this.inCipher.seq;
       }
 
       if (payload.length > 0) {
         await this.handlePacket(payload);
       }
     }
+  }
+
+  private findChannelByLocalId(localId: number): SshChannel | null {
+    if (this.shellChannel && this.shellChannel.localId === localId) return this.shellChannel;
+    if (this.execChannel && this.execChannel.localId === localId) return this.execChannel;
+    if (this.sftpChannel && this.sftpChannel.localId === localId) return this.sftpChannel;
+    return null;
   }
 
   // Handle unpacked SSH Protocol Packet
@@ -206,7 +262,16 @@ export class SshClient {
       }
       case SSH_MSG.IGNORE:
       case SSH_MSG.DEBUG:
+      case SSH_MSG.USERAUTH_BANNER:
         break;
+      case SSH_MSG.GLOBAL_REQUEST: {
+        const _reqName = reader.readString();
+        const wantReply = reader.readBoolean();
+        if (wantReply) {
+          await this.sendPacket(new SshPacketWriter().writeByte(SSH_MSG.REQUEST_FAILURE));
+        }
+        break;
+      }
       case SSH_MSG.KEXINIT:
         await this.handleKexInit(payload);
         break;
@@ -222,26 +287,81 @@ export class SshClient {
       case SSH_MSG.USERAUTH_SUCCESS:
         await this.handleAuthSuccess();
         break;
-      case SSH_MSG.USERAUTH_FAILURE:
-        this.close('Authentication failed: Invalid credentials');
+      case SSH_MSG.USERAUTH_FAILURE: {
+        const methods = reader.readNameList();
+        this.close(`认证失败：密码或凭据错误 (支持方式: ${methods.join(',') || 'password'})`);
         break;
+      }
       case SSH_MSG.CHANNEL_OPEN_CONFIRMATION:
-        this.handleChannelOpenConfirmation(reader);
+        await this.handleChannelOpenConfirmation(reader);
         break;
-      case SSH_MSG.CHANNEL_DATA:
-        this.handleChannelData(reader);
-        break;
-      case SSH_MSG.CHANNEL_WINDOW_ADJUST: {
-        const remoteId = reader.readUint32();
-        const bytesToAdd = reader.readUint32();
-        if (this.shellChannel && this.shellChannel.remoteId === remoteId) {
-          this.shellChannel.remoteWindow += bytesToAdd;
+      case SSH_MSG.CHANNEL_OPEN_FAILURE: {
+        const localId = reader.readUint32();
+        const reasonCode = reader.readUint32();
+        const desc = reader.readString();
+        const pending = this.pendingChannels.get(localId);
+        if (pending) {
+          this.pendingChannels.delete(localId);
+          pending.reject(new Error(`Channel open failed (${reasonCode}): ${desc}`));
         }
         break;
       }
+      case SSH_MSG.CHANNEL_DATA:
+        this.handleChannelData(reader);
+        break;
+      case SSH_MSG.CHANNEL_EXTENDED_DATA: {
+        const localId = reader.readUint32();
+        const _dataTypeCode = reader.readUint32();
+        const data = reader.readStringBytes();
+        const ch = this.findChannelByLocalId(localId);
+        if (ch && data.length > 0) {
+          const adjust = new SshPacketWriter();
+          adjust.writeByte(SSH_MSG.CHANNEL_WINDOW_ADJUST);
+          adjust.writeUint32(ch.remoteId);
+          adjust.writeUint32(data.length);
+          this.sendPacket(adjust).catch(() => {});
+        }
+        if (this.shellChannel && this.shellChannel.localId === localId) {
+          this.options.onShellData(data);
+        }
+        break;
+      }
+      case SSH_MSG.CHANNEL_WINDOW_ADJUST: {
+        const localId = reader.readUint32();
+        const bytesToAdd = reader.readUint32();
+        const ch = this.findChannelByLocalId(localId);
+        if (ch) {
+          ch.remoteWindow += bytesToAdd;
+        }
+        break;
+      }
+      case SSH_MSG.CHANNEL_REQUEST: {
+        const localId = reader.readUint32();
+        const _reqType = reader.readString();
+        const wantReply = reader.readBoolean();
+        if (wantReply) {
+          const ch = this.findChannelByLocalId(localId);
+          if (ch) {
+            await this.sendPacket(
+              new SshPacketWriter().writeByte(SSH_MSG.CHANNEL_SUCCESS).writeUint32(ch.remoteId)
+            );
+          }
+        }
+        break;
+      }
+      case SSH_MSG.CHANNEL_EOF:
+        break;
       case SSH_MSG.CHANNEL_CLOSE: {
-        const remoteId = reader.readUint32();
-        await this.sendPacket(new SshPacketWriter().writeByte(SSH_MSG.CHANNEL_CLOSE).writeUint32(remoteId));
+        const localId = reader.readUint32();
+        const ch = this.findChannelByLocalId(localId);
+        if (ch) {
+          await this.sendPacket(
+            new SshPacketWriter().writeByte(SSH_MSG.CHANNEL_CLOSE).writeUint32(ch.remoteId)
+          );
+          if (this.shellChannel && this.shellChannel.localId === localId) {
+            this.close('远程主机已关闭终端会话');
+          }
+        }
         break;
       }
     }
@@ -259,10 +379,16 @@ export class SshClient {
     const writer = new SshPacketWriter();
     writer.writeByte(SSH_MSG.KEXINIT);
     writer.writeBytes(cookie);
-    writer.writeNameList(['ecdh-sha2-nistp256', 'diffie-hellman-group14-sha256']);
-    writer.writeNameList(['rsa-sha2-512', 'rsa-sha2-256', 'ssh-rsa', 'ecdsa-sha2-nistp256']);
-    writer.writeNameList(['aes128-ctr', 'aes256-ctr']); // Ciphers client->server
-    writer.writeNameList(['aes128-ctr', 'aes256-ctr']); // Ciphers server->client
+    writer.writeNameList(['ecdh-sha2-nistp256']);
+    writer.writeNameList([
+      'ssh-ed25519',
+      'ecdsa-sha2-nistp256',
+      'rsa-sha2-512',
+      'rsa-sha2-256',
+      'ssh-rsa',
+    ]);
+    writer.writeNameList(['aes128-ctr']); // Ciphers client->server
+    writer.writeNameList(['aes128-ctr']); // Ciphers server->client
     writer.writeNameList(['hmac-sha2-256']); // MAC client->server
     writer.writeNameList(['hmac-sha2-256']); // MAC server->client
     writer.writeNameList(['none']); // Compression client->server
@@ -294,7 +420,7 @@ export class SshClient {
     reader.readByte(); // 31 (KEX_ECDH_REPLY)
     const hostKeyBytes = reader.readStringBytes();
     const serverPublicBytes = reader.readStringBytes();
-    const signatureBytes = reader.readStringBytes();
+    const _signatureBytes = reader.readStringBytes();
 
     if (!this.clientEcdhPair) throw new Error('Missing client ECDH key');
 
@@ -320,7 +446,7 @@ export class SshClient {
       this.sessionId = this.exchangeHashH;
     }
 
-    // Send SSH_MSG_NEWKEYS
+    // Send SSH_MSG_NEWKEYS in plaintext, then activate outCipher
     await this.sendPacket(new SshPacketWriter().writeByte(SSH_MSG.NEWKEYS));
   }
 
@@ -343,10 +469,10 @@ export class SshClient {
     const macC2S = await deriveKey(this.sharedSecretK, this.exchangeHashH, 'E', this.sessionId, 32);
     const macS2C = await deriveKey(this.sharedSecretK, this.exchangeHashH, 'F', this.sessionId, 32);
 
-    this.outCipher = new SshCipherState('aes128-ctr', keyC2S, ivC2S, macC2S);
+    this.outCipher = new SshCipherState('aes128-ctr', keyC2S, ivC2S, macC2S, this.outSeq);
     await this.outCipher.init(keyC2S);
 
-    this.inCipher = new SshCipherState('aes128-ctr', keyS2C, ivS2C, macS2C);
+    this.inCipher = new SshCipherState('aes128-ctr', keyS2C, ivS2C, macS2C, this.inSeq);
     await this.inCipher.init(keyS2C);
 
     // Request ssh-userauth service
@@ -371,17 +497,31 @@ export class SshClient {
       auth.writeString(this.options.password || '');
       await this.sendPacket(auth);
     } else {
-      // Public key auth or none fallback
-      this.close('Private key auth format parsing in progress');
+      this.close('当前仅支持密码认证方式，请在主机配置中切换为密码认证');
     }
   }
 
   private async handleAuthSuccess(): Promise<void> {
-    // Open Channel 0 for interactive Shell
-    await this.openChannel('shell');
+    try {
+      // Open Channel 0 for interactive Shell and resolve connect() once confirmed
+      await this.openChannel('shell');
+      if (this.connectResolve) {
+        const resolve = this.connectResolve;
+        this.connectResolve = null;
+        this.connectReject = null;
+        resolve();
+      }
+    } catch (err: any) {
+      if (this.connectReject) {
+        const reject = this.connectReject;
+        this.connectResolve = null;
+        this.connectReject = null;
+        reject(err);
+      }
+    }
   }
 
-  // Open Channels (shell, exec, or sftp)
+  // Open Channels (shell, exec, or sftp) and wait until CHANNEL_OPEN_CONFIRMATION + initial request are sent
   public async openChannel(type: 'shell' | 'exec' | 'sftp', execCommand?: string): Promise<number> {
     const localId = this.nextLocalChannelId++;
     const initialWindow = 2 * 1024 * 1024; // 2MB window
@@ -402,8 +542,12 @@ export class SshClient {
       this.sftpChannel = { localId, remoteId: 0, remoteWindow: 0, remoteMaxPacket: 0 };
     }
 
+    const confirmPromise = new Promise<number>((resolve, reject) => {
+      this.pendingChannels.set(localId, { type, execCommand, resolve, reject });
+    });
+
     await this.sendPacket(writer);
-    return localId;
+    return confirmPromise;
   }
 
   private async handleChannelOpenConfirmation(reader: SshPacketReader): Promise<void> {
@@ -411,6 +555,9 @@ export class SshClient {
     const remoteId = reader.readUint32();
     const remoteWindow = reader.readUint32();
     const remoteMaxPacket = reader.readUint32();
+
+    const pending = this.pendingChannels.get(localId);
+    this.pendingChannels.delete(localId);
 
     if (this.shellChannel && this.shellChannel.localId === localId) {
       this.shellChannel.remoteId = remoteId;
@@ -422,7 +569,7 @@ export class SshClient {
       ptyReq.writeByte(SSH_MSG.CHANNEL_REQUEST);
       ptyReq.writeUint32(remoteId);
       ptyReq.writeString('pty-req');
-      ptyReq.writeBoolean(true); // Want reply
+      ptyReq.writeBoolean(false);
       ptyReq.writeString('xterm-256color');
       ptyReq.writeUint32(this.options.cols || 80);
       ptyReq.writeUint32(this.options.rows || 24);
@@ -436,12 +583,22 @@ export class SshClient {
       shellReq.writeByte(SSH_MSG.CHANNEL_REQUEST);
       shellReq.writeUint32(remoteId);
       shellReq.writeString('shell');
-      shellReq.writeBoolean(true);
+      shellReq.writeBoolean(false);
       await this.sendPacket(shellReq);
     } else if (this.execChannel && this.execChannel.localId === localId) {
       this.execChannel.remoteId = remoteId;
       this.execChannel.remoteWindow = remoteWindow;
       this.execChannel.remoteMaxPacket = remoteMaxPacket;
+
+      if (pending?.execCommand) {
+        const execReq = new SshPacketWriter();
+        execReq.writeByte(SSH_MSG.CHANNEL_REQUEST);
+        execReq.writeUint32(remoteId);
+        execReq.writeString('exec');
+        execReq.writeBoolean(false);
+        execReq.writeString(pending.execCommand);
+        await this.sendPacket(execReq);
+      }
     } else if (this.sftpChannel && this.sftpChannel.localId === localId) {
       this.sftpChannel.remoteId = remoteId;
       this.sftpChannel.remoteWindow = remoteWindow;
@@ -452,9 +609,13 @@ export class SshClient {
       sftpReq.writeByte(SSH_MSG.CHANNEL_REQUEST);
       sftpReq.writeUint32(remoteId);
       sftpReq.writeString('subsystem');
-      sftpReq.writeBoolean(true);
+      sftpReq.writeBoolean(false);
       sftpReq.writeString('sftp');
       await this.sendPacket(sftpReq);
+    }
+
+    if (pending) {
+      pending.resolve(localId);
     }
   }
 
@@ -462,12 +623,15 @@ export class SshClient {
     const localId = reader.readUint32();
     const data = reader.readStringBytes();
 
-    // Auto adjust window
-    const adjust = new SshPacketWriter();
-    adjust.writeByte(SSH_MSG.CHANNEL_WINDOW_ADJUST);
-    adjust.writeUint32(localId);
-    adjust.writeUint32(data.length);
-    this.sendPacket(adjust).catch(() => {});
+    const ch = this.findChannelByLocalId(localId);
+    if (ch && data.length > 0) {
+      // Auto adjust window using remoteId
+      const adjust = new SshPacketWriter();
+      adjust.writeByte(SSH_MSG.CHANNEL_WINDOW_ADJUST);
+      adjust.writeUint32(ch.remoteId);
+      adjust.writeUint32(data.length);
+      this.sendPacket(adjust).catch(() => {});
+    }
 
     if (this.shellChannel && this.shellChannel.localId === localId) {
       this.options.onShellData(data);
@@ -506,51 +670,77 @@ export class SshClient {
   // Send SFTP Subsystem packet data
   public async writeSftpData(data: Uint8Array): Promise<void> {
     if (!this.sftpChannel) return;
-    const writer = new SshPacketWriter();
-    writer.writeByte(SSH_MSG.CHANNEL_DATA);
-    writer.writeUint32(this.sftpChannel.remoteId);
-    writer.writeStringBytes(data);
-    await this.sendPacket(writer);
+    const maxChunk = Math.min(this.sftpChannel.remoteMaxPacket || 32768, 32000);
+    let offset = 0;
+    while (offset < data.length) {
+      const chunk = data.subarray(offset, offset + maxChunk);
+      const writer = new SshPacketWriter();
+      writer.writeByte(SSH_MSG.CHANNEL_DATA);
+      writer.writeUint32(this.sftpChannel.remoteId);
+      writer.writeStringBytes(chunk);
+      await this.sendPacket(writer);
+      offset += chunk.length;
+    }
   }
 
-  // Pack and encrypt SSH packet before writing to Cloudflare TCP socket
-  private async sendPacket(packetPayload: SshPacketWriter): Promise<void> {
-    if (this.isClosed) return;
+  // Pack and encrypt SSH packet before writing to Cloudflare TCP socket (serialized via writeChain)
+  private sendPacket(packetPayload: SshPacketWriter): Promise<void> {
     const payloadBytes = packetPayload.toUint8Array();
-    const blockSize = 16; // AES block size
+    const nextWrite = this.writeChain.then(async () => {
+      if (this.isClosed) return;
+      const blockSize = 16; // AES block size
 
-    // RFC 4253 Section 6:
-    // packet_length (4 bytes) + padding_length (1 byte) + payload + random padding
-    // Total (packet_length + 4) must be a multiple of blockSize (or 8 in plaintext)
-    let paddingLen = blockSize - ((4 + 1 + payloadBytes.length) % blockSize);
-    if (paddingLen < 4) paddingLen += blockSize;
+      // RFC 4253 Section 6:
+      // packet_length (4 bytes) + padding_length (1 byte) + payload + random padding
+      // Total (packet_length + 4) must be a multiple of blockSize (or 8 in plaintext)
+      let paddingLen = blockSize - ((4 + 1 + payloadBytes.length) % blockSize);
+      if (paddingLen < 4) paddingLen += blockSize;
 
-    const packetLen = 1 + payloadBytes.length + paddingLen;
-    const paddingBytes = crypto.getRandomValues(new Uint8Array(paddingLen));
+      const packetLen = 1 + payloadBytes.length + paddingLen;
+      const paddingBytes = crypto.getRandomValues(new Uint8Array(paddingLen));
 
-    const unencrypted = new Uint8Array(4 + packetLen);
-    const view = new DataView(unencrypted.buffer);
-    view.setUint32(0, packetLen);
-    view.setUint8(4, paddingLen);
-    unencrypted.set(payloadBytes, 5);
-    unencrypted.set(paddingBytes, 5 + payloadBytes.length);
+      const unencrypted = new Uint8Array(4 + packetLen);
+      const view = new DataView(unencrypted.buffer);
+      view.setUint32(0, packetLen);
+      view.setUint8(4, paddingLen);
+      unencrypted.set(payloadBytes, 5);
+      unencrypted.set(paddingBytes, 5 + payloadBytes.length);
 
-    if (!this.outCipher) {
-      await this.writer.write(unencrypted);
-    } else {
-      const { ciphertext, mac } = await this.outCipher.encrypt(unencrypted);
-      const totalOut = new Uint8Array(ciphertext.length + (mac ? mac.length : 0));
-      totalOut.set(ciphertext, 0);
-      if (mac) {
-        totalOut.set(mac, ciphertext.length);
+      if (!this.outCipher) {
+        this.outSeq = (this.outSeq + 1) >>> 0;
+        await this.writer.write(unencrypted);
+      } else {
+        const { ciphertext, mac } = await this.outCipher.encrypt(unencrypted);
+        this.outSeq = this.outCipher.seq;
+        const totalOut = new Uint8Array(ciphertext.length + (mac ? mac.length : 0));
+        totalOut.set(ciphertext, 0);
+        if (mac) {
+          totalOut.set(mac, ciphertext.length);
+        }
+        await this.writer.write(totalOut);
       }
-      await this.writer.write(totalOut);
-    }
+    });
+
+    this.writeChain = nextWrite.catch(() => {});
+    return nextWrite;
   }
 
   public close(reason: string = 'Closed'): void {
     if (this.isClosed) return;
     this.isClosed = true;
+
+    if (this.connectReject) {
+      const reject = this.connectReject;
+      this.connectResolve = null;
+      this.connectReject = null;
+      reject(new Error(reason));
+    }
+
+    for (const [, pending] of this.pendingChannels) {
+      pending.reject(new Error(reason));
+    }
+    this.pendingChannels.clear();
+
     try {
       if (this.writer) this.writer.close().catch(() => {});
       if (this.socket) this.socket.close();
@@ -558,3 +748,4 @@ export class SshClient {
     this.options.onClose(reason);
   }
 }
+

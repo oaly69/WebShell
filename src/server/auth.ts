@@ -59,10 +59,10 @@ export async function createAuthToken(user: { id: string; username: string; role
     exp: Date.now() + 30 * 24 * 3600 * 1000, // 30 days
   };
 
-  const payloadStr = JSON.stringify(payload);
-  const payloadB64 = btoa(payloadStr);
-
   const enc = new TextEncoder();
+  const payloadStr = JSON.stringify(payload);
+  const payloadB64 = bytesToBase64(enc.encode(payloadStr));
+
   const key = await crypto.subtle.importKey(
     'raw',
     enc.encode(TOKEN_SECRET) as unknown as BufferSource,
@@ -104,7 +104,8 @@ export async function verifyAuthToken(token: string): Promise<{ sub: string; nam
 
     if (!valid) return null;
 
-    const payload = JSON.parse(atob(payloadB64));
+    const dec = new TextDecoder();
+    const payload = JSON.parse(dec.decode(base64ToBytes(payloadB64)));
     if (payload.exp && Date.now() > payload.exp) {
       return null; // Expired
     }

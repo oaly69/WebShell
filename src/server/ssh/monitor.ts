@@ -4,8 +4,8 @@ export const MONITOR_SHELL_COMMAND = `
 while true; do
   echo "---FS_METRIC_START---"
   date +%s
-  cat /proc/uptime /proc/loadavg 2>/dev/null
-  grep -E '^(cpu |MemTotal|MemAvailable|Buffers|Cached|SwapTotal|SwapFree)' /proc/meminfo /proc/stat 2>/dev/null
+  cat /proc/loadavg 2>/dev/null
+  grep -h -E '^(cpu |MemTotal|MemFree|MemAvailable|Buffers|Cached|SwapTotal|SwapFree)' /proc/meminfo /proc/stat 2>/dev/null
   cat /proc/net/dev 2>/dev/null
   df -P -B1 -x tmpfs -x devtmpfs -x squashfs 2>/dev/null
   ps -eo pid,user,pcpu,pmem,comm --sort=-pcpu 2>/dev/null | head -n 11
@@ -48,21 +48,32 @@ export class MetricsParser {
 
       // 2. Memory & CPU lines
       let memTotal = 0;
+      let memFree = 0;
       let memAvail = 0;
+      let memBuffers = 0;
+      let memCached = 0;
       let swapTotal = 0;
       let swapFree = 0;
       let currentCpu: CpuTimes | null = null;
 
       while (lineIdx < lines.length) {
-        const line = lines[lineIdx].trim();
+        const rawLine = lines[lineIdx].trim();
+        // Strip optional filename prefix just in case busybox grep ignores -h
+        const line = rawLine.replace(/^\/proc\/[a-z]+:/, '').trim();
         if (line.startsWith('Inter-|') || line.startsWith('face |') || line.startsWith('Filesystem')) {
           break;
         }
 
         if (line.startsWith('MemTotal:')) {
           memTotal = parseInt(line.replace(/[^0-9]/g, ''), 10) * 1024;
+        } else if (line.startsWith('MemFree:')) {
+          memFree = parseInt(line.replace(/[^0-9]/g, ''), 10) * 1024;
         } else if (line.startsWith('MemAvailable:')) {
           memAvail = parseInt(line.replace(/[^0-9]/g, ''), 10) * 1024;
+        } else if (line.startsWith('Buffers:')) {
+          memBuffers = parseInt(line.replace(/[^0-9]/g, ''), 10) * 1024;
+        } else if (line.startsWith('Cached:')) {
+          memCached = parseInt(line.replace(/[^0-9]/g, ''), 10) * 1024;
         } else if (line.startsWith('SwapTotal:')) {
           swapTotal = parseInt(line.replace(/[^0-9]/g, ''), 10) * 1024;
         } else if (line.startsWith('SwapFree:')) {
@@ -83,18 +94,13 @@ export class MetricsParser {
         lineIdx++;
       }
 
+      if (memAvail === 0 && (memFree > 0 || memBuffers > 0 || memCached > 0)) {
+        memAvail = memFree + memBuffers + memCached;
+      }
+
       // Compute CPU %
       let cpuPercent = 0;
-      if (currentCpu && this.prevCpu) {
-        const prevTotal =
-          this.prevCpu.user +
-          this.prevCpu.nice +
-          this.prevCpu.system +
-          this.prevCpu.idle +
-          this.prevCpu.iowait +
-          this.prevCpu.irq +
-          this.prevCpu.softirq +
-          this.prevCpu.steal;
+      if (currentCpu) {
         const currTotal =
           currentCpu.user +
           currentCpu.nice +
@@ -105,11 +111,30 @@ export class MetricsParser {
           currentCpu.softirq +
           currentCpu.steal;
 
-        const totalDiff = currTotal - prevTotal;
-        const idleDiff = currentCpu.idle + currentCpu.iowait - (this.prevCpu.idle + this.prevCpu.iowait);
+        if (this.prevCpu) {
+          const prevTotal =
+            this.prevCpu.user +
+            this.prevCpu.nice +
+            this.prevCpu.system +
+            this.prevCpu.idle +
+            this.prevCpu.iowait +
+            this.prevCpu.irq +
+            this.prevCpu.softirq +
+            this.prevCpu.steal;
 
-        if (totalDiff > 0) {
-          cpuPercent = Math.max(0, Math.min(100, Math.round(((totalDiff - idleDiff) / totalDiff) * 100)));
+          const totalDiff = currTotal - prevTotal;
+          const idleDiff =
+            currentCpu.idle + currentCpu.iowait - (this.prevCpu.idle + this.prevCpu.iowait);
+
+          if (totalDiff > 0) {
+            cpuPercent = Math.max(
+              0,
+              Math.min(100, Math.round(((totalDiff - idleDiff) / totalDiff) * 100))
+            );
+          }
+        } else if (currTotal > 0) {
+          const busy = currTotal - (currentCpu.idle + currentCpu.iowait);
+          cpuPercent = Math.max(0, Math.min(100, Math.round((busy / currTotal) * 100)));
         }
       }
       this.prevCpu = currentCpu;

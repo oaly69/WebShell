@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuthStore } from '../../store/useAuthStore';
+import { initVault } from '../../crypto/vault';
 import { Users, UserPlus, Trash2, X, Shield, User, AlertCircle, CheckCircle, Ban } from 'lucide-react';
 
 interface ManagedUser {
@@ -58,6 +59,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({ isOpen
     setError(null);
 
     try {
+      const { saltBase64, verifierCipher } = await initVault(newPassword);
       const res = await fetch('/api/admin/users', {
         method: 'POST',
         headers: {
@@ -68,6 +70,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({ isOpen
           username: newUsername,
           password: newPassword,
           role: newRole,
+          kdf_salt: saltBase64,
+          verifier_cipher: verifierCipher,
         }),
       });
 

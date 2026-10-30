@@ -154,18 +154,35 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
 
     // 2. Derive user's E2EE MasterKey on client
     let masterKey: CryptoKey;
-    try {
-      masterKey = await unlockVault(
-        masterPassword,
-        data.kdf_salt,
-        data.verifier_cipher,
-        data.kdf_iterations || 600000
-      );
-    } catch {
-      // If user had an initial placeholder verifier (e.g. freshly created by admin),
-      // re-initialize their vault verifier seamlessly
+    let finalSalt = data.kdf_salt;
+    let finalIterations = data.kdf_iterations || 600000;
+    let finalVerifier = data.verifier_cipher;
+
+    if (data.verifier_cipher === 'INITIAL_VERIFIER') {
+      // Freshly created user by admin without initialized verifier: initialize and persist to server
       const newVault = await initVault(masterPassword);
       masterKey = newVault.masterKey;
+      finalSalt = newVault.saltBase64;
+      finalVerifier = newVault.verifierCipher;
+      await fetch('/api/auth/vault', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${data.token}`,
+        },
+        body: JSON.stringify({
+          kdf_salt: finalSalt,
+          kdf_iterations: finalIterations,
+          verifier_cipher: finalVerifier,
+        }),
+      });
+    } else {
+      masterKey = await unlockVault(
+        masterPassword,
+        finalSalt,
+        finalVerifier,
+        finalIterations
+      );
     }
 
     try {
@@ -180,29 +197,45 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
       masterKey,
       isVaultLocked: false,
       vaultMeta: {
-        kdf_salt: data.kdf_salt,
-        kdf_iterations: data.kdf_iterations || 600000,
-        verifier_cipher: data.verifier_cipher,
+        kdf_salt: finalSalt,
+        kdf_iterations: finalIterations,
+        verifier_cipher: finalVerifier,
       },
     });
   },
 
   unlockVaultWithPassword: async (password: string) => {
-    const { vaultMeta } = get();
+    const { vaultMeta, token } = get();
     if (!vaultMeta) throw new Error('未获取到密码箱元数据，请重新登录');
 
     let masterKey: CryptoKey;
-    try {
+    let nextMeta = vaultMeta;
+
+    if (vaultMeta.verifier_cipher === 'INITIAL_VERIFIER') {
+      const newVault = await initVault(password);
+      masterKey = newVault.masterKey;
+      nextMeta = {
+        kdf_salt: newVault.saltBase64,
+        kdf_iterations: 600000,
+        verifier_cipher: newVault.verifierCipher,
+      };
+      if (token) {
+        await fetch('/api/auth/vault', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(nextMeta),
+        });
+      }
+    } else {
       masterKey = await unlockVault(
         password,
         vaultMeta.kdf_salt,
         vaultMeta.verifier_cipher,
         vaultMeta.kdf_iterations || 600000
       );
-    } catch {
-      // Re-initialize vault if freshly created
-      const newVault = await initVault(password);
-      masterKey = newVault.masterKey;
     }
 
     try {
@@ -213,6 +246,7 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
     set({
       masterKey,
       isVaultLocked: false,
+      vaultMeta: nextMeta,
     });
   },
 

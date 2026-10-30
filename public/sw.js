@@ -1,8 +1,6 @@
-// Service Worker for FinalShell Web PWA
-const CACHE_NAME = 'finalshell-v1';
+// Service Worker for FinalShell Web PWA (Network-First Strategy)
+const CACHE_NAME = 'finalshell-v3';
 const STATIC_ASSETS = [
-  '/',
-  '/index.html',
   '/manifest.json',
   '/icon.svg',
 ];
@@ -34,25 +32,29 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Bypass API and WebSocket routes
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws/')) {
+  // Bypass API, WebSocket, and non-GET routes
+  if (
+    event.request.method !== 'GET' ||
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/ws/')
+  ) {
     return;
   }
 
+  // Always use Network-First so new deployments take effect immediately
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      return (
-        cached ||
-        fetch(event.request).then((response) => {
-          if (response.status === 200 && event.request.method === 'GET') {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, clone);
-            });
-          }
-          return response;
-        })
-      );
-    })
+    fetch(event.request)
+      .then((response) => {
+        if (response.status === 200) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, clone);
+          });
+        }
+        return response;
+      })
+      .catch(() => {
+        return caches.match(event.request);
+      })
   );
 });

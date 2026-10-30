@@ -105,18 +105,25 @@ export function incrementCtr(iv: Uint8Array): void {
   }
 }
 
-// Symmetric Cipher State for Inbound/Outbound SSH traffic
+// Symmetric Cipher State for Inbound/Outbound SSH traffic (AES-128-CTR + HMAC-SHA2-256)
 export class SshCipherState {
   private key: CryptoKey | null = null;
   private iv: Uint8Array;
   private macKey: Uint8Array | null = null;
   private sequenceNumber: number = 0;
 
-  constructor(_cipherName: string, _keyBytes: Uint8Array, ivBytes: Uint8Array, macKeyBytes?: Uint8Array) {
+  constructor(
+    _cipherName: string,
+    _keyBytes: Uint8Array,
+    ivBytes: Uint8Array,
+    macKeyBytes?: Uint8Array,
+    initialSeq: number = 0
+  ) {
     this.iv = new Uint8Array(ivBytes);
     if (macKeyBytes) {
       this.macKey = new Uint8Array(macKeyBytes);
     }
+    this.sequenceNumber = initialSeq >>> 0;
   }
 
   async init(keyBytes: Uint8Array): Promise<void> {
@@ -137,55 +144,90 @@ export class SshCipherState {
     this.sequenceNumber = (this.sequenceNumber + 1) >>> 0;
   }
 
-  async encrypt(data: Uint8Array): Promise<{ ciphertext: Uint8Array; mac?: Uint8Array }> {
+  // RFC 4253 Section 6.4: MAC is computed over (sequence_number || unencrypted_packet)
+  async encrypt(unencryptedPacket: Uint8Array): Promise<{ ciphertext: Uint8Array; mac?: Uint8Array }> {
     if (!this.key) {
-      return { ciphertext: data };
-    }
-
-    const currentIv = new Uint8Array(this.iv);
-    const encryptedBuf = await crypto.subtle.encrypt(
-      { name: 'AES-CTR', counter: currentIv as unknown as BufferSource, length: 128 },
-      this.key,
-      data as unknown as BufferSource
-    );
-    const ciphertext = new Uint8Array(encryptedBuf);
-
-    const blocks = Math.ceil(data.length / 16);
-    for (let i = 0; i < blocks; i++) {
-      incrementCtr(this.iv);
+      return { ciphertext: unencryptedPacket };
     }
 
     let mac: Uint8Array | undefined;
     if (this.macKey) {
       const macPayload = new SshPacketWriter();
       macPayload.writeUint32(this.sequenceNumber);
-      macPayload.writeBytes(ciphertext);
+      macPayload.writeBytes(unencryptedPacket);
       mac = await hmacSha256(this.macKey, macPayload.toUint8Array());
+    }
+
+    const currentIv = new Uint8Array(this.iv);
+    const encryptedBuf = await crypto.subtle.encrypt(
+      { name: 'AES-CTR', counter: currentIv as unknown as BufferSource, length: 128 },
+      this.key,
+      unencryptedPacket as unknown as BufferSource
+    );
+    const ciphertext = new Uint8Array(encryptedBuf);
+
+    const blocks = Math.ceil(unencryptedPacket.length / 16);
+    for (let i = 0; i < blocks; i++) {
+      incrementCtr(this.iv);
     }
 
     this.incrementSeq();
     return { ciphertext, mac };
   }
 
-  async decrypt(ciphertext: Uint8Array): Promise<Uint8Array> {
+  // Peek the 4-byte packet_length from the first 16-byte AES block WITHOUT mutating IV or sequence number
+  async peekPacketLength(firstBlock: Uint8Array): Promise<number> {
     if (!this.key) {
-      return ciphertext;
+      return new DataView(firstBlock.buffer, firstBlock.byteOffset, 4).getUint32(0);
     }
 
     const currentIv = new Uint8Array(this.iv);
     const decryptedBuf = await crypto.subtle.decrypt(
       { name: 'AES-CTR', counter: currentIv as unknown as BufferSource, length: 128 },
       this.key,
-      ciphertext as unknown as BufferSource
+      firstBlock.subarray(0, 16) as unknown as BufferSource
+    );
+    return new DataView(decryptedBuf).getUint32(0);
+  }
+
+  // Decrypt a full SSH packet, advance IV counter, verify HMAC-SHA2-256, and increment sequence number once
+  async decryptPacket(fullCiphertext: Uint8Array, receivedMac?: Uint8Array): Promise<Uint8Array> {
+    if (!this.key) {
+      return fullCiphertext;
+    }
+
+    const currentIv = new Uint8Array(this.iv);
+    const decryptedBuf = await crypto.subtle.decrypt(
+      { name: 'AES-CTR', counter: currentIv as unknown as BufferSource, length: 128 },
+      this.key,
+      fullCiphertext as unknown as BufferSource
     );
     const plaintext = new Uint8Array(decryptedBuf);
 
-    const blocks = Math.ceil(ciphertext.length / 16);
+    const blocks = Math.ceil(fullCiphertext.length / 16);
     for (let i = 0; i < blocks; i++) {
       incrementCtr(this.iv);
+    }
+
+    if (this.macKey && receivedMac) {
+      const macPayload = new SshPacketWriter();
+      macPayload.writeUint32(this.sequenceNumber);
+      macPayload.writeBytes(plaintext);
+      const expectedMac = await hmacSha256(this.macKey, macPayload.toUint8Array());
+      if (expectedMac.length !== receivedMac.length) {
+        throw new Error('SSH MAC length mismatch');
+      }
+      let diff = 0;
+      for (let i = 0; i < expectedMac.length; i++) {
+        diff |= expectedMac[i] ^ receivedMac[i];
+      }
+      if (diff !== 0) {
+        throw new Error('SSH packet MAC verification failed');
+      }
     }
 
     this.incrementSeq();
     return plaintext;
   }
 }
+

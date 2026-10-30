@@ -1,10 +1,9 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import type { TerminalSession } from '../../store/useSessionStore';
 import { useSessionStore } from '../../store/useSessionStore';
 import Editor from '@monaco-editor/react';
 import {
   Folder,
-  File,
   FileCode,
   ArrowUp,
   RefreshCw,
@@ -14,6 +13,8 @@ import {
   X,
   Save,
   Upload,
+  Edit3,
+  AlertCircle,
 } from 'lucide-react';
 import { encodeControlMsg } from '@shared/ws-protocol';
 
@@ -26,6 +27,8 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
   const [editingFile, setEditingFile] = useState<{ path: string; content: string } | null>(null);
   const [editorLoading, setEditorLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const currentPath = session.sftpPath || '/';
 
@@ -37,11 +40,16 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
     sftpNavigate(session.sessionId, upPath || '/');
   };
 
+  const handleEntryClick = (entry: any) => {
+    if (entry.isDirectory) {
+      sftpNavigate(session.sessionId, entry.path);
+    }
+  };
+
   const handleEntryDoubleClick = (entry: any) => {
     if (entry.isDirectory) {
       sftpNavigate(session.sessionId, entry.path);
     } else {
-      // Open with Monaco Editor
       openEditor(entry.path);
     }
   };
@@ -58,8 +66,12 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
           const json = JSON.parse(new TextDecoder().decode(u8.subarray(1)));
           if (json.type === 'sftp_file_content' && json.reqId === reqId) {
             session.ws?.removeEventListener('message', handleFileContent);
-            setEditingFile({ path: filePath, content: json.content });
             setEditorLoading(false);
+            if (json.error) {
+              alert(`打开文件失败: ${json.error}`);
+            } else {
+              setEditingFile({ path: filePath, content: json.content });
+            }
           }
         }
       } catch {}
@@ -75,6 +87,78 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
     );
   };
 
+  const handleDownload = (entry: any) => {
+    if (!session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+    const reqId = crypto.randomUUID();
+    const handleFileContent = (event: MessageEvent) => {
+      try {
+        const u8 = new Uint8Array(event.data);
+        if (u8[0] === 0x00) {
+          const json = JSON.parse(new TextDecoder().decode(u8.subarray(1)));
+          if (json.type === 'sftp_file_content' && json.reqId === reqId) {
+            session.ws?.removeEventListener('message', handleFileContent);
+            if (json.error) {
+              alert(`下载文件失败: ${json.error}`);
+              return;
+            }
+            const blob = new Blob([json.content], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = entry.name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }
+        }
+      } catch {}
+    };
+
+    session.ws.addEventListener('message', handleFileContent);
+    session.ws.send(
+      encodeControlMsg({
+        type: 'sftp_readfile',
+        reqId,
+        path: entry.path,
+      })
+    );
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+    setUploading(true);
+    try {
+      const arrayBuf = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuf);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64Content = btoa(binary);
+      const targetPath = currentPath.endsWith('/')
+        ? `${currentPath}${file.name}`
+        : `${currentPath}/${file.name}`;
+
+      const reqId = crypto.randomUUID();
+      session.ws.send(
+        encodeControlMsg({
+          type: 'sftp_writefile',
+          reqId,
+          path: targetPath,
+          content: base64Content,
+          encoding: 'base64',
+        })
+      );
+    } catch (err: any) {
+      alert(`上传失败: ${err.message}`);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const saveEditedFile = () => {
     if (!editingFile || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
     setSaveLoading(true);
@@ -86,14 +170,14 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
         reqId,
         path: editingFile.path,
         content: editingFile.content,
+        encoding: 'utf-8',
       })
     );
 
     setTimeout(() => {
       setSaveLoading(false);
       setEditingFile(null);
-      sftpRefresh(session.sessionId);
-    }, 400);
+    }, 300);
   };
 
   const handleDelete = (path: string, isDirectory: boolean) => {
@@ -108,7 +192,6 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
           isDirectory,
         })
       );
-      setTimeout(() => sftpRefresh(session.sessionId), 300);
     }
   };
 
@@ -125,7 +208,6 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
           path: newDir,
         })
       );
-      setTimeout(() => sftpRefresh(session.sessionId), 300);
     }
   };
 
@@ -149,9 +231,27 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
             <ArrowUp className="w-3.5 h-3.5" />
           </button>
           <span className="font-mono text-fs-text truncate">{currentPath}</span>
+          {editorLoading && (
+            <span className="text-[11px] text-fs-info animate-pulse ml-2">正在读取文件...</span>
+          )}
         </div>
 
         <div className="flex items-center space-x-1.5 shrink-0">
+          <input
+            ref={fileInputRef}
+            type="file"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            title="上传文件到当前目录"
+            className="flex items-center space-x-1 px-2 py-0.5 rounded hover:bg-fs-hover text-fs-text text-[11px] disabled:opacity-50"
+          >
+            <Upload className="w-3.5 h-3.5 text-fs-info" />
+            <span>{uploading ? '上传中...' : '上传'}</span>
+          </button>
           <button
             onClick={handleCreateFolder}
             title="新建文件夹"
@@ -170,6 +270,13 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
         </div>
       </div>
 
+      {session.sftpError && (
+        <div className="flex items-center space-x-1.5 bg-fs-danger/10 border-b border-fs-danger/30 px-3 py-1 text-[11px] text-fs-danger">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">{session.sftpError}</span>
+        </div>
+      )}
+
       {/* 2. File Table */}
       <div className="flex-1 overflow-y-auto">
         <table className="w-full text-[11px] text-left">
@@ -178,7 +285,7 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
               <th className="py-1 px-3">文件名</th>
               <th className="py-1 px-3 w-24">大小</th>
               <th className="py-1 px-3 w-24">权限</th>
-              <th className="py-1 px-3 w-20 text-right">操作</th>
+              <th className="py-1 px-3 w-28 text-right">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-fs-border/40 text-fs-text">
@@ -192,6 +299,7 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
               session.sftpEntries.map((entry) => (
                 <tr
                   key={entry.path}
+                  onClick={() => handleEntryClick(entry)}
                   onDoubleClick={() => handleEntryDoubleClick(entry)}
                   className="hover:bg-fs-hover cursor-pointer group"
                 >
@@ -207,15 +315,40 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
                     {entry.isDirectory ? '-' : formatFileSize(entry.size)}
                   </td>
                   <td className="py-1.5 px-3 font-mono text-fs-textMuted">{entry.permissions}</td>
-                  <td className="py-1.5 px-3 text-right">
+                  <td className="py-1.5 px-3 text-right space-x-1">
+                    {!entry.isDirectory && (
+                      <>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openEditor(entry.path);
+                          }}
+                          title="在线编辑"
+                          className="opacity-70 group-hover:opacity-100 p-1 rounded hover:bg-fs-active text-fs-info transition-opacity"
+                        >
+                          <Edit3 className="w-3 h-3 inline" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDownload(entry);
+                          }}
+                          title="下载文件"
+                          className="opacity-70 group-hover:opacity-100 p-1 rounded hover:bg-fs-active text-fs-accent transition-opacity"
+                        >
+                          <Download className="w-3 h-3 inline" />
+                        </button>
+                      </>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         handleDelete(entry.path, entry.isDirectory);
                       }}
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-fs-active text-fs-danger transition-opacity"
+                      title="删除"
+                      className="opacity-70 group-hover:opacity-100 p-1 rounded hover:bg-fs-active text-fs-danger transition-opacity"
                     >
-                      <Trash2 className="w-3 h-3" />
+                      <Trash2 className="w-3 h-3 inline" />
                     </button>
                   </td>
                 </tr>
@@ -271,3 +404,4 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
     </div>
   );
 };
+

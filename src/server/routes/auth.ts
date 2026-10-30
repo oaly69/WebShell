@@ -165,3 +165,41 @@ authRouter.get('/me', async (c) => {
     verifier_cipher: user.verifier_cipher,
   });
 });
+
+// Update Current User's Vault Verifier (for first-time vault initialization)
+authRouter.put('/vault', async (c) => {
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const token = authHeader.substring(7);
+  const payload = await verifyAuthToken(token);
+  if (!payload) {
+    return c.json({ error: 'Invalid or expired token' }, 401);
+  }
+
+  const body = await c.req.json<{
+    kdf_salt: string;
+    kdf_iterations?: number;
+    verifier_cipher: string;
+  }>();
+
+  if (!body.kdf_salt || !body.verifier_cipher) {
+    return c.json({ error: 'Missing required vault parameters' }, 400);
+  }
+
+  const db = getDb(c.env.DB);
+  await db
+    .update(users)
+    .set({
+      kdf_salt: body.kdf_salt,
+      kdf_iterations: body.kdf_iterations || 600000,
+      verifier_cipher: body.verifier_cipher,
+      updated_at: Date.now(),
+    })
+    .where(eq(users.id, payload.sub));
+
+  return c.json({ success: true });
+});
+

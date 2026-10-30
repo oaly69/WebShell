@@ -20,6 +20,7 @@ export interface TerminalSession {
   sftpPath: string;
   sftpEntries: SftpEntry[];
   sftpLoading: boolean;
+  sftpError?: string;
   ws: WebSocket | null;
   onPtyDataCallbacks: Set<(data: Uint8Array) => void>;
 }
@@ -139,8 +140,8 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
             }));
 
             if (msg.state === 'connected') {
-              // Trigger initial SFTP root list
-              get().sftpNavigate(sessionId, '/root');
+              // Trigger initial SFTP home directory list via realpath('.')
+              get().sftpNavigate(sessionId, '.');
             }
           } else if (msg.type === 'sftp_list_result') {
             set((state) => ({
@@ -149,12 +150,30 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
                   ? {
                       ...s,
                       sftpLoading: false,
-                      sftpPath: msg.path,
-                      sftpEntries: msg.entries || [],
+                      sftpPath: msg.success ? msg.path : s.sftpPath,
+                      sftpEntries: msg.success ? msg.entries || [] : s.sftpEntries,
+                      sftpError: msg.success ? undefined : msg.error || '读取目录失败',
                     }
                   : s
               ),
             }));
+          } else if (msg.type === 'sftp_op_result') {
+            if (msg.success) {
+              set((state) => ({
+                sessions: state.sessions.map((s) =>
+                  s.sessionId === sessionId ? { ...s, sftpError: undefined } : s
+                ),
+              }));
+              get().sftpRefresh(sessionId);
+            } else {
+              set((state) => ({
+                sessions: state.sessions.map((s) =>
+                  s.sessionId === sessionId
+                    ? { ...s, sftpError: msg.error || `SFTP ${msg.action} 操作失败` }
+                    : s
+                ),
+              }));
+            }
           }
         }
       } catch (err) {

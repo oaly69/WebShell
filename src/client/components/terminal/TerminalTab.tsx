@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { TerminalSession } from '../../store/useSessionStore';
+import { useSessionStore } from '../../store/useSessionStore';
 import { encodePtyData, encodeControlMsg } from '@shared/ws-protocol';
 import { RefreshCw, AlertCircle } from 'lucide-react';
 
@@ -11,6 +12,7 @@ interface TerminalTabProps {
 }
 
 export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
+  const { closeSession, openSession } = useSessionStore();
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -53,7 +55,7 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
     term.loadAddon(fitAddon);
 
     term.open(containerRef.current);
-    
+
     // Fit safely after layout paint
     requestAnimationFrame(() => {
       try {
@@ -109,30 +111,53 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
     };
   }, [session.sessionId]);
 
+  // Sync terminal dimensions once SSH connection is established
+  useEffect(() => {
+    if (session.status === 'connected' && fitAddonRef.current && termRef.current) {
+      requestAnimationFrame(() => {
+        try {
+          fitAddonRef.current?.fit();
+          const cols = termRef.current?.cols || 80;
+          const rows = termRef.current?.rows || 24;
+          if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+            session.ws.send(encodeControlMsg({ type: 'resize', cols, rows }));
+          }
+          termRef.current?.focus();
+        } catch {}
+      });
+    }
+  }, [session.status]);
+
+  const handleReconnect = () => {
+    const hostToReconnect = session.host;
+    closeSession(session.sessionId);
+    openSession(hostToReconnect);
+  };
+
   return (
     <div className="relative flex-1 h-full w-full bg-fs-bg overflow-hidden">
       <div ref={containerRef} className="h-full w-full p-2" />
 
       {/* Disconnected / Error Overlay */}
       {session.status !== 'connected' && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/60 backdrop-blur-xs text-white">
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/60 backdrop-blur-xs text-white px-4 text-center">
           {session.status === 'connecting' ? (
             <div className="flex items-center space-x-2 text-sm text-fs-info">
               <RefreshCw className="w-5 h-5 animate-spin" />
               <span>正在连接 {session.host.hostname}:{session.host.port}...</span>
             </div>
           ) : (
-            <div className="flex flex-col items-center space-x-2 text-sm text-fs-danger">
-              <div className="flex items-center space-x-2 mb-2">
-                <AlertCircle className="w-5 h-5" />
+            <div className="flex flex-col items-center space-y-3 text-sm text-fs-danger">
+              <div className="flex items-center space-x-2">
+                <AlertCircle className="w-5 h-5 shrink-0" />
                 <span>连接已断开: {session.errorMessage || '会话结束'}</span>
               </div>
               <button
-                onClick={() => window.location.reload()}
-                className="flex items-center space-x-1.5 rounded bg-fs-primary hover:bg-fs-primaryHover px-3 py-1.5 text-xs text-white"
+                onClick={handleReconnect}
+                className="flex items-center space-x-1.5 rounded bg-fs-primary hover:bg-fs-primaryHover px-3.5 py-1.5 text-xs text-white transition-colors"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
-                <span>重新加载</span>
+                <span>重新连接</span>
               </button>
             </div>
           )}
@@ -141,3 +166,4 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
     </div>
   );
 };
+

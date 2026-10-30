@@ -15,9 +15,12 @@ export class SshSessionDO extends DurableObject {
   private ws: WebSocket | null = null;
   private ssh: SshClient | null = null;
   private sftp: SftpClient | null = null;
+  private sshConnectPromise: Promise<void> | null = null;
+  private sftpInitPromise: Promise<void> | null = null;
   private monitorParser = new MetricsParser();
   private monitorBuffer = '';
   private isMonitorEnabled = false;
+  private isMonitorRunning = false;
 
   async fetch(request: Request): Promise<Response> {
     const upgradeHeader = request.headers.get('Upgrade');
@@ -92,6 +95,10 @@ export class SshSessionDO extends DurableObject {
     switch (msg.type) {
       case 'connect': {
         this.sendControl({ type: 'status', state: 'connecting' });
+        this.isMonitorRunning = false;
+        this.sftp = null;
+        this.sftpInitPromise = null;
+
         this.ssh = new SshClient({
           hostname: msg.hostname,
           port: msg.port,
@@ -118,13 +125,23 @@ export class SshSessionDO extends DurableObject {
           },
         });
 
-        await this.ssh.connect();
+        this.sshConnectPromise = this.ssh.connect();
+        await this.sshConnectPromise;
         this.sendControl({ type: 'status', state: 'connected' });
+
+        // If monitor_toggle arrived while connecting, start monitor channel now
+        if (this.isMonitorEnabled && !this.isMonitorRunning && this.ssh) {
+          this.isMonitorRunning = true;
+          this.ssh.openChannel('exec', MONITOR_SHELL_COMMAND).catch(() => {
+            this.isMonitorRunning = false;
+          });
+        }
         break;
       }
 
       case 'resize': {
-        if (this.ssh) {
+        if (this.ssh && this.sshConnectPromise) {
+          await this.sshConnectPromise.catch(() => {});
           await this.ssh.resizeShell(msg.cols, msg.rows);
         }
         break;
@@ -132,22 +149,48 @@ export class SshSessionDO extends DurableObject {
 
       case 'monitor_toggle': {
         this.isMonitorEnabled = msg.enabled;
-        if (this.isMonitorEnabled && this.ssh) {
-          // Open Channel 2 for non-agent monitoring script
-          await this.ssh.openChannel('exec', MONITOR_SHELL_COMMAND);
+        if (this.isMonitorEnabled && this.ssh && this.sshConnectPromise && !this.isMonitorRunning) {
+          await this.sshConnectPromise;
+          if (!this.isMonitorRunning && this.ssh) {
+            this.isMonitorRunning = true;
+            await this.ssh.openChannel('exec', MONITOR_SHELL_COMMAND).catch(() => {
+              this.isMonitorRunning = false;
+            });
+          }
         }
         break;
       }
 
       case 'sftp_list': {
-        await this.ensureSftp();
         try {
-          const entries = await this.sftp!.readdir(msg.path);
+          await this.ensureSftp();
+          let targetPath = msg.path;
+          if (!targetPath || targetPath === '.') {
+            targetPath = await this.sftp!.realpath('.');
+          }
+          let entries;
+          try {
+            entries = await this.sftp!.readdir(targetPath);
+          } catch (dirErr: any) {
+            // If '/root' was requested for a non-root user, fallback to user's home directory
+            if (targetPath === '/root') {
+              const homePath = await this.sftp!.realpath('.');
+              if (homePath && homePath !== '/root') {
+                targetPath = homePath;
+                entries = await this.sftp!.readdir(targetPath);
+              } else {
+                targetPath = '/';
+                entries = await this.sftp!.readdir('/');
+              }
+            } else {
+              throw dirErr;
+            }
+          }
           this.sendControl({
             type: 'sftp_list_result',
             reqId: msg.reqId,
             success: true,
-            path: msg.path,
+            path: targetPath,
             entries,
           });
         } catch (err: any) {
@@ -163,8 +206,8 @@ export class SshSessionDO extends DurableObject {
       }
 
       case 'sftp_mkdir': {
-        await this.ensureSftp();
         try {
+          await this.ensureSftp();
           const ok = await this.sftp!.mkdir(msg.path);
           this.sendControl({ type: 'sftp_op_result', reqId: msg.reqId, action: 'mkdir', success: ok });
         } catch (err: any) {
@@ -174,8 +217,8 @@ export class SshSessionDO extends DurableObject {
       }
 
       case 'sftp_rm': {
-        await this.ensureSftp();
         try {
+          await this.ensureSftp();
           const ok = await this.sftp!.remove(msg.path, msg.isDirectory);
           this.sendControl({ type: 'sftp_op_result', reqId: msg.reqId, action: 'remove', success: ok });
         } catch (err: any) {
@@ -185,8 +228,8 @@ export class SshSessionDO extends DurableObject {
       }
 
       case 'sftp_rename': {
-        await this.ensureSftp();
         try {
+          await this.ensureSftp();
           const ok = await this.sftp!.rename(msg.oldPath, msg.newPath);
           this.sendControl({ type: 'sftp_op_result', reqId: msg.reqId, action: 'rename', success: ok });
         } catch (err: any) {
@@ -196,8 +239,8 @@ export class SshSessionDO extends DurableObject {
       }
 
       case 'sftp_readfile': {
-        await this.ensureSftp();
         try {
+          await this.ensureSftp();
           const res = await this.sftp!.readFile(msg.path);
           this.sendControl({
             type: 'sftp_file_content',
@@ -221,9 +264,12 @@ export class SshSessionDO extends DurableObject {
       }
 
       case 'sftp_writefile': {
-        await this.ensureSftp();
         try {
-          const bytes = new TextEncoder().encode(msg.content);
+          await this.ensureSftp();
+          const bytes =
+            msg.encoding === 'base64'
+              ? Uint8Array.from(atob(msg.content), (c) => c.charCodeAt(0))
+              : new TextEncoder().encode(msg.content);
           const ok = await this.sftp!.writeFile(msg.path, bytes);
           this.sendControl({ type: 'sftp_op_result', reqId: msg.reqId, action: 'writefile', success: ok });
         } catch (err: any) {
@@ -235,13 +281,31 @@ export class SshSessionDO extends DurableObject {
   }
 
   private async ensureSftp(): Promise<void> {
-    if (!this.sftp && this.ssh) {
-      this.sftp = new SftpClient(async (bytes) => {
-        await this.ssh!.writeSftpData(bytes);
-      });
-      await this.ssh.openChannel('sftp');
-      await this.sftp.init();
+    if (!this.ssh || !this.sshConnectPromise) {
+      throw new Error('SSH 会话尚未建立');
     }
+    await this.sshConnectPromise;
+
+    if (this.sftpInitPromise) {
+      await this.sftpInitPromise;
+      return;
+    }
+
+    this.sftpInitPromise = (async () => {
+      try {
+        this.sftp = new SftpClient(async (bytes) => {
+          await this.ssh!.writeSftpData(bytes);
+        });
+        await this.ssh!.openChannel('sftp');
+        await this.sftp.init();
+      } catch (err) {
+        this.sftp = null;
+        this.sftpInitPromise = null;
+        throw err;
+      }
+    })();
+
+    await this.sftpInitPromise;
   }
 
   private handleMonitorRawData(chunk: Uint8Array): void {

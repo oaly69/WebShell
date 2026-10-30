@@ -5,9 +5,17 @@ import type { SftpEntry } from '@shared/types';
 export class SftpClient {
   private sendChannelData: (data: Uint8Array) => Promise<void>;
   private nextRequestId = 1;
-  private pendingRequests = new Map<number, (res: { type: number; reader: SshPacketReader }) => void>();
+  private pendingRequests = new Map<
+    number,
+    {
+      resolve: (res: { type: number; reader: SshPacketReader }) => void;
+      reject: (err: Error) => void;
+      timer: any;
+    }
+  >();
   private incomingBuffer = new Uint8Array(0);
   private isInitialized = false;
+  private versionResolve: (() => void) | null = null;
 
   constructor(sendChannelData: (data: Uint8Array) => Promise<void>) {
     this.sendChannelData = sendChannelData;
@@ -33,37 +41,60 @@ export class SftpClient {
         return;
       }
 
-      const packetData = this.incomingBuffer.subarray(4, totalNeeded);
-      this.incomingBuffer = this.incomingBuffer.subarray(totalNeeded);
+      const packetData = this.incomingBuffer.slice(4, totalNeeded);
+      this.incomingBuffer = this.incomingBuffer.slice(totalNeeded);
 
       const reader = new SshPacketReader(packetData);
       const type = reader.readByte();
 
       if (type === SFTP_MSG.VERSION) {
-        const version = reader.readUint32();
+        const _version = reader.readUint32();
         this.isInitialized = true;
+        if (this.versionResolve) {
+          const resolve = this.versionResolve;
+          this.versionResolve = null;
+          resolve();
+        }
         continue;
       }
 
       // Read requestId
       const requestId = reader.readUint32();
-      const resolver = this.pendingRequests.get(requestId);
-      if (resolver) {
+      const pending = this.pendingRequests.get(requestId);
+      if (pending) {
+        clearTimeout(pending.timer);
         this.pendingRequests.delete(requestId);
-        resolver({ type, reader });
+        pending.resolve({ type, reader });
       }
     }
   }
 
   public async init(): Promise<void> {
+    if (this.isInitialized) return;
+
+    const versionPromise = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.versionResolve = null;
+        reject(new Error('SFTP 子系统握手超时'));
+      }, 10000);
+      this.versionResolve = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+
     const writer = new SshPacketWriter();
     writer.writeUint32(5); // length = 1 (type) + 4 (version)
     writer.writeByte(SFTP_MSG.INIT);
     writer.writeUint32(3); // SFTP version 3
     await this.sendChannelData(writer.toUint8Array());
+    await versionPromise;
   }
 
-  private async request(type: number, buildPayload: (writer: SshPacketWriter, id: number) => void): Promise<{ type: number; reader: SshPacketReader }> {
+  private async request(
+    type: number,
+    buildPayload: (writer: SshPacketWriter, id: number) => void
+  ): Promise<{ type: number; reader: SshPacketReader }> {
     const id = this.nextRequestId++;
     const payload = new SshPacketWriter();
     buildPayload(payload, id);
@@ -74,12 +105,38 @@ export class SftpClient {
     packet.writeByte(type);
     packet.writeBytes(payloadBytes);
 
-    return new Promise((resolve) => {
-      this.pendingRequests.set(id, resolve);
-      this.sendChannelData(packet.toUint8Array()).catch(() => {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
         this.pendingRequests.delete(id);
+        reject(new Error('SFTP 请求响应超时'));
+      }, 15000);
+
+      this.pendingRequests.set(id, { resolve, reject, timer });
+      this.sendChannelData(packet.toUint8Array()).catch((err) => {
+        clearTimeout(timer);
+        this.pendingRequests.delete(id);
+        reject(err);
       });
     });
+  }
+
+  // Resolve canonical path (e.g. '.' -> '/root' or '/home/ubuntu')
+  public async realpath(remotePath: string): Promise<string> {
+    try {
+      const res = await this.request(SFTP_MSG.REALPATH, (w, id) => {
+        w.writeUint32(id);
+        w.writeString(remotePath);
+      });
+      if (res.type === SFTP_MSG.NAME) {
+        const count = res.reader.readUint32();
+        if (count > 0) {
+          return res.reader.readString() || '/';
+        }
+      }
+      return '/';
+    } catch {
+      return '/';
+    }
   }
 
   // List Directory Entries
@@ -91,7 +148,12 @@ export class SftpClient {
     });
 
     if (openRes.type !== SFTP_MSG.HANDLE) {
-      throw new Error(`Failed to opendir: ${remotePath}`);
+      if (openRes.type === SFTP_MSG.STATUS) {
+        openRes.reader.readUint32(); // status code
+        const errMsg = openRes.reader.readString();
+        throw new Error(`无法打开目录 (${remotePath}): ${errMsg}`);
+      }
+      throw new Error(`无法打开目录: ${remotePath}`);
     }
     const handle = openRes.reader.readStringBytes();
     const entries: SftpEntry[] = [];
@@ -133,11 +195,20 @@ export class SftpClient {
               readRes.reader.readUint32(); // atime
               mtime = readRes.reader.readUint32();
             }
+            if (flags & SFTP_ATTR.EXTENDED) {
+              const extCount = readRes.reader.readUint32();
+              for (let e = 0; e < extCount; e++) {
+                readRes.reader.readStringBytes();
+                readRes.reader.readStringBytes();
+              }
+            }
 
             if (filename !== '.' && filename !== '..') {
               const isDirectory = (mode & 0o040000) === 0o040000;
               const isSymlink = (mode & 0o120000) === 0o120000;
-              const fullPath = remotePath.endsWith('/') ? `${remotePath}${filename}` : `${remotePath}/${filename}`;
+              const fullPath = remotePath.endsWith('/')
+                ? `${remotePath}${filename}`
+                : `${remotePath}/${filename}`;
 
               entries.push({
                 name: filename,
@@ -145,7 +216,7 @@ export class SftpClient {
                 isDirectory,
                 isSymlink,
                 size,
-                permissions: longname.split(/\s+/)[0] || 'rwxr-xr-x',
+                permissions: longname.split(/\s+/)[0] || (isDirectory ? 'drwxr-xr-x' : '-rw-r--r--'),
                 mode,
                 uid,
                 gid,
@@ -160,7 +231,7 @@ export class SftpClient {
       await this.request(SFTP_MSG.CLOSE, (w, id) => {
         w.writeUint32(id);
         w.writeStringBytes(handle);
-      });
+      }).catch(() => {});
     }
 
     return entries;
