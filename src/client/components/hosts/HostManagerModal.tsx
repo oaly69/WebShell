@@ -64,23 +64,154 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
 
   const hostGroups = getHostGroups();
 
-  // Group hosts by group_name, ensuring all known groups appear in tree
-  const groupedHosts = hostGroups.reduce<Record<string, DecryptedHost[]>>((acc, grp) => {
-    acc[grp] = [];
-    return acc;
-  }, {});
-
-  for (const host of hosts) {
-    if (search && !host.name.toLowerCase().includes(search.toLowerCase()) && !host.hostname.includes(search)) {
-      continue;
-    }
-    const grp = host.group_name || '默认分组';
-    if (!groupedHosts[grp]) groupedHosts[grp] = [];
-    groupedHosts[grp].push(host);
+  interface GroupNode {
+    name: string;
+    fullPath: string;
+    subGroups: Record<string, GroupNode>;
+    hosts: DecryptedHost[];
   }
+
+  const buildGroupTree = (): Record<string, GroupNode> => {
+    const rootGroups: Record<string, GroupNode> = {};
+
+    const getOrCreateNode = (fullPath: string): GroupNode => {
+      const parts = fullPath.split('/').map((s) => s.trim()).filter(Boolean);
+      if (parts.length === 0) parts.push('默认分组');
+
+      let currentMap = rootGroups;
+      let currentPath = '';
+      let node: GroupNode | null = null;
+
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        currentPath = currentPath ? `${currentPath}/${part}` : part;
+        if (!currentMap[part]) {
+          currentMap[part] = {
+            name: part,
+            fullPath: currentPath,
+            subGroups: {},
+            hosts: [],
+          };
+        }
+        node = currentMap[part];
+        currentMap = node.subGroups;
+      }
+
+      return node!;
+    };
+
+    // Ensure all known groups exist in tree
+    for (const grp of hostGroups) {
+      if (grp) getOrCreateNode(grp);
+    }
+    getOrCreateNode('默认分组');
+
+    // Populate hosts
+    for (const host of hosts) {
+      if (
+        search &&
+        !host.name.toLowerCase().includes(search.toLowerCase()) &&
+        !host.hostname.includes(search) &&
+        !host.username.toLowerCase().includes(search.toLowerCase())
+      ) {
+        continue;
+      }
+      const grp = host.group_name || '默认分组';
+      const targetNode = getOrCreateNode(grp);
+      targetNode.hosts.push(host);
+    }
+
+    return rootGroups;
+  };
+
+  const groupTree = buildGroupTree();
+
+  const getNodeTotalHostCount = (node: GroupNode): number => {
+    let count = node.hosts.length;
+    for (const sub of Object.values(node.subGroups)) {
+      count += getNodeTotalHostCount(sub);
+    }
+    return count;
+  };
 
   const toggleGroup = (grp: string) => {
     setCollapsedGroups((prev) => ({ ...prev, [grp]: !prev[grp] }));
+  };
+
+  const renderGroupNode = (node: GroupNode, depth: number = 0): React.ReactNode => {
+    const isCollapsed = collapsedGroups[node.fullPath];
+    const totalCount = getNodeTotalHostCount(node);
+    const subGroupList = Object.values(node.subGroups);
+
+    return (
+      <div key={node.fullPath} className="select-none">
+        <div
+          onClick={() => toggleGroup(node.fullPath)}
+          style={{ paddingLeft: `${6 + depth * 14}px` }}
+          className="flex items-center space-x-1.5 py-1 text-xs font-medium text-fs-textMuted hover:text-fs-text cursor-pointer hover:bg-fs-hover/60 rounded"
+        >
+          {isCollapsed ? (
+            <ChevronRight className="w-3.5 h-3.5 shrink-0 text-fs-textMuted" />
+          ) : (
+            <ChevronDown className="w-3.5 h-3.5 shrink-0 text-fs-textMuted" />
+          )}
+          <Folder className="w-3.5 h-3.5 shrink-0 text-fs-warning" />
+          <span className="truncate">{node.name}</span>
+          <span className="text-[10px] text-fs-textMuted shrink-0">({totalCount})</span>
+        </div>
+
+        {!isCollapsed && (
+          <div className="space-y-0.5 mt-0.5">
+            {/* 1. Sub-groups first */}
+            {subGroupList.map((sub) => renderGroupNode(sub, depth + 1))}
+
+            {/* 2. Direct hosts under this group */}
+            {node.hosts.map((host) => (
+              <div
+                key={host.id}
+                style={{ paddingLeft: `${22 + depth * 14}px` }}
+                onDoubleClick={() => handleConnect(host)}
+                className="group flex items-center justify-between rounded p-1.5 text-xs hover:bg-fs-hover cursor-pointer"
+              >
+                <div className="flex flex-col min-w-0 pr-2">
+                  <span className="font-medium text-fs-text truncate">{host.name}</span>
+                  <span className="text-[11px] text-fs-textMuted truncate">
+                    {host.username}@{host.hostname}:{host.port}
+                  </span>
+                </div>
+
+                <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                  <button
+                    onClick={() => handleConnect(host)}
+                    title="连接"
+                    className="p-1 rounded hover:bg-fs-active text-fs-accent"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingHost(host);
+                      setIsFormOpen(true);
+                    }}
+                    title="编辑"
+                    className="p-1 rounded hover:bg-fs-active text-fs-info"
+                  >
+                    <Edit className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => deleteHost(host.id)}
+                    title="删除"
+                    className="p-1 rounded hover:bg-fs-active text-fs-danger"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const handleConnect = (host: DecryptedHost) => {
@@ -214,71 +345,10 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
           </div>
 
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {Object.keys(groupedHosts).length === 0 ? (
+            {Object.keys(groupTree).length === 0 ? (
               <div className="text-center py-12 text-xs text-fs-textMuted">暂无主机，请点击右上角新建</div>
             ) : (
-              Object.entries(groupedHosts).map(([group, groupList]) => {
-                const isCollapsed = collapsedGroups[group];
-                return (
-                  <div key={group} className="select-none">
-                    <div
-                      onClick={() => toggleGroup(group)}
-                      className="flex items-center space-x-1.5 px-2 py-1 text-xs font-medium text-fs-textMuted hover:text-fs-text cursor-pointer"
-                    >
-                      {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                      <Folder className="w-3.5 h-3.5 text-fs-warning" />
-                      <span>{group}</span>
-                      <span className="text-[10px] text-fs-textMuted">({groupList.length})</span>
-                    </div>
-
-                    {!isCollapsed && (
-                      <div className="pl-5 space-y-1 mt-0.5">
-                        {groupList.map((host) => (
-                          <div
-                            key={host.id}
-                            onDoubleClick={() => handleConnect(host)}
-                            className="group flex items-center justify-between rounded p-2 text-xs hover:bg-fs-hover cursor-pointer"
-                          >
-                            <div className="flex flex-col">
-                              <span className="font-medium text-fs-text">{host.name}</span>
-                              <span className="text-[11px] text-fs-textMuted">
-                                {host.username}@{host.hostname}:{host.port}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                onClick={() => handleConnect(host)}
-                                title="连接"
-                                className="p-1 rounded hover:bg-fs-active text-fs-accent"
-                              >
-                                <Play className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setEditingHost(host);
-                                  setIsFormOpen(true);
-                                }}
-                                title="编辑"
-                                className="p-1 rounded hover:bg-fs-active text-fs-info"
-                              >
-                                <Edit className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => deleteHost(host.id)}
-                                title="删除"
-                                className="p-1 rounded hover:bg-fs-active text-fs-danger"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
+              Object.values(groupTree).map((node) => renderGroupNode(node, 0))
             )}
           </div>
         </div>
@@ -336,7 +406,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                       >
                         {hostGroups.map((grp) => (
                           <option key={grp} value={grp} className="bg-fs-surface text-fs-text">
-                            {grp}
+                            {grp.replace(/\//g, ' / ')}
                           </option>
                         ))}
                       </select>

@@ -276,7 +276,15 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
     const { hosts, customHostGroups } = get();
     const setOfGroups = new Set<string>(['默认分组', ...customHostGroups]);
     for (const h of hosts) {
-      if (h.group_name) setOfGroups.add(h.group_name);
+      if (h.group_name) {
+        setOfGroups.add(h.group_name);
+        const parts = h.group_name.split('/').map((s) => s.trim()).filter(Boolean);
+        let acc = '';
+        for (const p of parts) {
+          acc = acc ? `${acc}/${p}` : p;
+          setOfGroups.add(acc);
+        }
+      }
     }
     return Array.from(setOfGroups);
   },

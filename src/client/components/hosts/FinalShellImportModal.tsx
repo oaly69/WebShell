@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useSyncStore } from '../../store/useSyncStore';
 import { useAuthStore } from '../../store/useAuthStore';
-import { parseFinalShellConfig } from '../../crypto/finalshellDecoder';
+import { parseFinalShellConfig, extractGroupFromPath } from '../../crypto/finalshellDecoder';
 import type { DecryptedHost } from '@shared/types';
 import {
   Upload,
@@ -14,15 +14,67 @@ import {
   Lock,
   Loader2,
   Folder,
+  FolderUp,
   CheckSquare,
   Square,
   FileCode2,
+  Layers,
 } from 'lucide-react';
 
 interface FinalShellImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+}
+
+interface ScannedFileInfo {
+  file: File;
+  relativePath: string;
+}
+
+/**
+ * Recursively scans directory entries from Drag & Drop DataTransferItems
+ */
+async function scanEntry(entry: any, basePath = ''): Promise<ScannedFileInfo[]> {
+  if (!entry) return [];
+  if (entry.isFile) {
+    return new Promise((resolve) => {
+      entry.file(
+        (file: File) => {
+          const relativePath = basePath ? `${basePath}/${file.name}` : file.name;
+          resolve([{ file, relativePath }]);
+        },
+        () => resolve([])
+      );
+    });
+  } else if (entry.isDirectory) {
+    const dirReader = entry.createReader();
+    const readEntriesPromise = (): Promise<any[]> => {
+      return new Promise((resolve) => {
+        dirReader.readEntries(
+          (batch: any[]) => resolve(batch || []),
+          () => resolve([])
+        );
+      });
+    };
+
+    let allSubEntries: any[] = [];
+    let batch: any[];
+    // Continuous reading loop until empty according to W3C spec
+    do {
+      batch = await readEntriesPromise();
+      if (batch.length > 0) {
+        allSubEntries = allSubEntries.concat(batch);
+      }
+    } while (batch.length > 0);
+
+    const currentPath = basePath ? `${basePath}/${entry.name}` : entry.name;
+    const nested = await Promise.all(
+      allSubEntries.map((sub) => scanEntry(sub, currentPath))
+    );
+    return nested.flat();
+  }
+  return [];
 }
 
 export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
@@ -38,24 +90,37 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
   const [parsedHosts, setParsedHosts] = useState<Partial<DecryptedHost>[]>([]);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successCount, setSuccessCount] = useState<number | null>(null);
+  const [statsInfo, setStatsInfo] = useState<{ filesCount: number; groupsCount: number } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const availableGroups = getHostGroups();
 
   if (!isOpen) return null;
 
-  const handleFiles = async (files: FileList | File[]) => {
+  // Process a collection of files with relative paths (from folder chooser or drag-drop)
+  const processScannedFiles = async (items: ScannedFileInfo[]) => {
     setError(null);
     setSuccessCount(null);
     const hostList: Partial<DecryptedHost>[] = [];
+    const validFiles = items.filter((item) =>
+      item.file.name.toLowerCase().endsWith('.json') || item.file.name.toLowerCase().endsWith('.txt')
+    );
+
+    if (validFiles.length === 0) {
+      setError('未在所选文件夹中找到有效的 .json 配置文件，请确认选择的是 FinalShell 的 conn 目录或包含 json 的文件夹。');
+      return;
+    }
 
     try {
-      for (const file of Array.from(files)) {
-        const text = await file.text();
-        const extracted = parseFinalShellConfig(text);
+      for (const item of validFiles) {
+        const text = await item.file.text();
+        const inferredGroup = extractGroupFromPath(item.relativePath);
+        const extracted = parseFinalShellConfig(text, inferredGroup);
         hostList.push(...extracted);
       }
 
@@ -64,10 +129,76 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
         return;
       }
 
+      const uniqueGroups = new Set(hostList.map((h) => h.group_name || '默认分组'));
+      setStatsInfo({
+        filesCount: validFiles.length,
+        groupsCount: uniqueGroups.size,
+      });
+
       setParsedHosts(hostList);
       setSelectedIndices(new Set(hostList.map((_, i) => i)));
     } catch (err: any) {
+      console.error('Scan files error:', err);
       setError(err.message || '读取文件失败，请检查文件格式');
+    }
+  };
+
+  // Handle standard file selection
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const fileList = Array.from(e.target.files);
+    const scanned: ScannedFileInfo[] = fileList.map((f) => ({
+      file: f,
+      relativePath: f.webkitRelativePath || f.name,
+    }));
+    processScannedFiles(scanned);
+    e.target.value = '';
+  };
+
+  // Handle folder selection
+  const handleFolderSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const fileList = Array.from(e.target.files);
+    const scanned: ScannedFileInfo[] = fileList.map((f) => ({
+      file: f,
+      relativePath: f.webkitRelativePath || f.name,
+    }));
+    processScannedFiles(scanned);
+    e.target.value = '';
+  };
+
+  // Handle Drag & Drop
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+
+    const items = e.dataTransfer.items;
+    if (items && items.length > 0) {
+      const scannedFiles: ScannedFileInfo[] = [];
+      const entries: any[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const entry = (items[i] as any).webkitGetAsEntry?.();
+        if (entry) {
+          entries.push(entry);
+        }
+      }
+
+      if (entries.length > 0) {
+        for (const entry of entries) {
+          const results = await scanEntry(entry);
+          scannedFiles.push(...results);
+        }
+        await processScannedFiles(scannedFiles);
+        return;
+      }
+    }
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const scanned: ScannedFileInfo[] = Array.from(e.dataTransfer.files).map((f) => ({
+        file: f,
+        relativePath: f.webkitRelativePath || f.name,
+      }));
+      await processScannedFiles(scanned);
     }
   };
 
@@ -84,6 +215,12 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
       setError('未能解析出有效的服务器连接，请确保粘贴了正确的 FinalShell JSON 数据。');
       return;
     }
+
+    const uniqueGroups = new Set(extracted.map((h) => h.group_name || '默认分组'));
+    setStatsInfo({
+      filesCount: 1,
+      groupsCount: uniqueGroups.size,
+    });
 
     setParsedHosts(extracted);
     setSelectedIndices(new Set(extracted.map((_, i) => i)));
@@ -136,8 +273,17 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
       for (let i = 0; i < toImport.length; i++) {
         const item = toImport[i];
         const group = (item.group_name || '默认分组').trim();
-        if (group && !availableGroups.includes(group)) {
-          addHostGroup(group);
+
+        // Automatically register hierarchical ancestor paths into custom groups
+        if (group && group !== '默认分组') {
+          const segments = group.split('/').map((s) => s.trim()).filter(Boolean);
+          let currentAcc = '';
+          for (const seg of segments) {
+            currentAcc = currentAcc ? `${currentAcc}/${seg}` : seg;
+            if (!availableGroups.includes(currentAcc)) {
+              addHostGroup(currentAcc);
+            }
+          }
         }
 
         await saveHost({
@@ -171,19 +317,19 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-3 sm:p-6 select-none">
-      <div className="flex flex-col w-full max-w-3xl max-h-[90vh] rounded-2xl border border-fs-border bg-fs-surface shadow-2xl overflow-hidden">
+      <div className="flex flex-col w-full max-w-3xl max-h-[92vh] rounded-2xl border border-fs-border bg-fs-surface shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-fs-border px-5 py-4 bg-fs-bg/60">
           <div className="flex items-center space-x-2.5">
             <div className="p-2 rounded-xl bg-fs-primary/15 text-fs-accent border border-fs-primary/30">
-              <Upload className="w-5 h-5" />
+              <FolderUp className="w-5 h-5" />
             </div>
             <div>
               <h3 className="text-sm sm:text-base font-bold text-fs-text">
-                导入 FinalShell 服务器配置
+                导入 FinalShell 服务器与层级分组
               </h3>
               <p className="text-[11px] text-fs-textMuted mt-0.5">
-                支持 FinalShell 导出的 JSON 文件、conn 目录配置及 DES 加密密码自动解析
+                支持直接导入整个 conn 文件夹，自动递归扫描并还原目录树层级分组
               </p>
             </div>
           </div>
@@ -208,7 +354,9 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
           {successCount !== null && (
             <div className="flex items-center space-x-2 rounded-xl bg-fs-accent/15 border border-fs-accent/40 p-3 text-xs text-fs-accent font-medium">
               <CheckCircle2 className="w-5 h-5 shrink-0" />
-              <span>成功导入 {successCount} 台服务器！正在同步...</span>
+              <span>
+                成功导入 {successCount} 台服务器及对应层级分组！正在同步至控制台...
+              </span>
             </div>
           )}
 
@@ -225,8 +373,8 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
                       : 'text-fs-textMuted hover:text-fs-text'
                   }`}
                 >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>选择文件导入</span>
+                  <FolderUp className="w-3.5 h-3.5" />
+                  <span>文件夹 / 文件导入</span>
                 </button>
                 <button
                   type="button"
@@ -244,45 +392,72 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
 
               {mode === 'upload' ? (
                 <div
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
+                  onDragOver={(e) => {
                     e.preventDefault();
-                    if (e.dataTransfer.files) {
-                      handleFiles(e.dataTransfer.files);
-                    }
+                    setIsDragging(true);
                   }}
-                  onClick={() => fileInputRef.current?.click()}
-                  className="border-2 border-dashed border-fs-border hover:border-fs-primary/60 rounded-2xl p-8 sm:p-12 text-center cursor-pointer bg-fs-bg/30 hover:bg-fs-bg/60 transition-all flex flex-col items-center justify-center space-y-3"
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={handleDrop}
+                  className={`border-2 border-dashed rounded-2xl p-6 sm:p-10 text-center transition-all flex flex-col items-center justify-center space-y-3.5 ${
+                    isDragging
+                      ? 'border-fs-primary bg-fs-primary/10'
+                      : 'border-fs-border hover:border-fs-primary/60 bg-fs-bg/30 hover:bg-fs-bg/60'
+                  }`}
                 >
-                  <div className="p-4 rounded-2xl bg-fs-primary/10 text-fs-info">
-                    <FileCode2 className="w-10 h-10" />
+                  <div className="p-3.5 rounded-2xl bg-fs-primary/10 text-fs-info">
+                    <FolderUp className="w-9 h-9" />
                   </div>
+
                   <div>
                     <p className="text-sm font-semibold text-fs-text">
-                      点击选择或将 FinalShell 导出文件拖入此处
+                      点击按钮选择或将 FinalShell 文件夹直接拖入此处
                     </p>
-                    <p className="text-xs text-fs-textMuted mt-1">
-                      支持选择单个或多个 <code className="text-fs-accent">.json</code> 文件（如 FinalShell conn 目录中的配置）
+                    <p className="text-xs text-fs-textMuted mt-1 max-w-lg">
+                      推荐直接选择 FinalShell 的 <code className="text-fs-accent font-mono font-semibold">conn</code> 目录，将自动递归遍历子目录并完美生成层级分组
                     </p>
                   </div>
+
+                  {/* Hidden inputs */}
+                  <input
+                    type="file"
+                    ref={folderInputRef}
+                    {...({ webkitdirectory: '', directory: '' } as any)}
+                    multiple
+                    className="hidden"
+                    onChange={handleFolderSelect}
+                  />
                   <input
                     type="file"
                     ref={fileInputRef}
                     multiple
                     accept=".json,application/json,text/plain"
                     className="hidden"
-                    onChange={(e) => {
-                      if (e.target.files) {
-                        handleFiles(e.target.files);
-                      }
-                    }}
+                    onChange={handleFileSelect}
                   />
-                  <button
-                    type="button"
-                    className="rounded-xl bg-fs-primary hover:bg-fs-primaryHover px-4 py-2 text-xs font-semibold text-white shadow transition-all"
-                  >
-                    浏览文件
-                  </button>
+
+                  {/* Action buttons */}
+                  <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => folderInputRef.current?.click()}
+                      className="flex items-center space-x-1.5 rounded-xl bg-fs-primary hover:bg-fs-primaryHover px-4 py-2 text-xs font-semibold text-white shadow transition-all"
+                    >
+                      <Folder className="w-4 h-4" />
+                      <span>选择整个文件夹 (自动识别层级)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex items-center space-x-1.5 rounded-xl bg-fs-surface hover:bg-fs-hover border border-fs-border px-3.5 py-2 text-xs font-medium text-fs-text transition-all"
+                    >
+                      <FileCode2 className="w-4 h-4 text-fs-warning" />
+                      <span>选择单个/多个 JSON 文件</span>
+                    </button>
+                  </div>
+
+                  <p className="text-[11px] text-fs-textMuted/70">
+                    💡 FinalShell 默认配置目录位置：Windows: <code className="font-mono">%LOCALAPPDATA%\finalshell\conn</code> 或 安装路径/conn
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -293,7 +468,7 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
                     rows={8}
                     value={pasteText}
                     onChange={(e) => setPasteText(e.target.value)}
-                    placeholder='例如: [{"name":"服务器1","host":"1.2.3.4","port":22,"user_name":"root","password":"..."}, ...]'
+                    placeholder='例如: [{"name":"服务器1","host":"1.2.3.4","port":22,"user_name":"root","password":"...","parent_name":"香港/NAT"}, ...]'
                     className="w-full rounded-xl bg-fs-bg border border-fs-border p-3 text-xs font-mono text-fs-text placeholder-fs-textMuted focus:outline-none focus:border-fs-primary resize-y"
                   />
                   <div className="flex justify-end">
@@ -311,6 +486,20 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
           ) : (
             /* Parsed host preview list */
             <div className="space-y-3">
+              {statsInfo && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-fs-bg/60 border border-fs-border rounded-xl p-3 text-xs gap-2">
+                  <div className="flex items-center space-x-2 text-fs-text">
+                    <Layers className="w-4 h-4 text-fs-accent shrink-0" />
+                    <span>
+                      已扫描解析出 <strong className="text-fs-accent">{parsedHosts.length}</strong> 台服务器，识别到 <strong className="text-fs-warning">{statsInfo.groupsCount}</strong> 个层级分组
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-fs-textMuted">
+                    密码均已完成纯客户端 DES 本地解密
+                  </span>
+                </div>
+              )}
+
               <div className="flex items-center justify-between text-xs text-fs-textMuted pb-2 border-b border-fs-border">
                 <div className="flex items-center space-x-2">
                   <button
@@ -333,20 +522,22 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
                     setParsedHosts([]);
                     setSelectedIndices(new Set());
                     setPasteText('');
+                    setStatsInfo(null);
                     setError(null);
                   }}
                   className="text-xs text-fs-textMuted hover:text-fs-danger transition-colors"
                 >
-                  重新选择
+                  重新选择文件夹/文件
                 </button>
               </div>
 
               {/* Server table */}
-              <div className="max-h-[360px] overflow-y-auto space-y-2 pr-1">
+              <div className="max-h-[380px] overflow-y-auto space-y-2 pr-1">
                 {parsedHosts.map((host, idx) => {
                   const isChecked = selectedIndices.has(idx);
                   const hasPassword = !!host.credentials?.password;
                   const hasKey = !!host.credentials?.privateKey;
+                  const groupDisplay = (host.group_name || '默认分组').replace(/\//g, ' / ');
 
                   return (
                     <div
@@ -366,8 +557,8 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
                         )}
                         <div>
                           <div className="flex items-center space-x-2 font-medium text-fs-text">
-                            <Server className="w-3.5 h-3.5 text-fs-accent" />
-                            <span>{host.name}</span>
+                            <Server className="w-3.5 h-3.5 text-fs-accent shrink-0" />
+                            <span className="truncate max-w-[200px] sm:max-w-xs">{host.name}</span>
                           </div>
                           <div className="text-[11px] text-fs-textMuted mt-0.5 font-mono">
                             {host.username}@{host.hostname}:{host.port}
@@ -398,15 +589,15 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
                           )}
                         </div>
 
-                        {/* Group selector / input */}
-                        <div className="flex items-center space-x-1">
-                          <Folder className="w-3.5 h-3.5 text-fs-warning" />
+                        {/* Hierarchical Group display / input */}
+                        <div className="flex items-center space-x-1.5" title="层级分组，支持以 / 分隔多层目录">
+                          <Folder className="w-3.5 h-3.5 text-fs-warning shrink-0" />
                           <input
                             type="text"
                             value={host.group_name || '默认分组'}
                             onChange={(e) => updateHostGroup(idx, e.target.value)}
-                            placeholder="分组名称"
-                            className="w-24 sm:w-28 rounded bg-fs-surface border border-fs-border px-2 py-1 text-[11px] text-fs-text focus:outline-none focus:border-fs-primary"
+                            placeholder="如: 香港/NAT"
+                            className="w-28 sm:w-36 rounded bg-fs-surface border border-fs-border px-2 py-1 text-[11px] text-fs-text focus:outline-none focus:border-fs-primary"
                           />
                         </div>
                       </div>
@@ -422,7 +613,7 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
         <div className="flex items-center justify-between border-t border-fs-border px-5 py-3.5 bg-fs-bg/60">
           <div className="text-xs text-fs-textMuted">
             {parsedHosts.length > 0 && (
-              <span>已选 {selectedIndices.size} / {parsedHosts.length} 台服务器</span>
+              <span>已勾选 {selectedIndices.size} / {parsedHosts.length} 台服务器</span>
             )}
           </div>
           <div className="flex items-center space-x-2.5">
@@ -444,7 +635,7 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
                 {isProcessing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 <span>
                   {isProcessing
-                    ? `正在导入 (${progress?.current || 0}/${progress?.total || 0})...`
+                    ? `正在入库 (${progress?.current || 0}/${progress?.total || 0})...`
                     : `确认导入 (${selectedIndices.size} 台)`}
                 </span>
               </button>

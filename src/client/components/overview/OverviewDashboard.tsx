@@ -53,7 +53,10 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
       h.name.toLowerCase().includes(search.toLowerCase()) ||
       h.hostname.includes(search) ||
       h.username.includes(search);
-    const matchesGroup = selectedGroup === 'all' || (h.group_name || '默认分组') === selectedGroup;
+    const matchesGroup =
+      selectedGroup === 'all' ||
+      (h.group_name || '默认分组') === selectedGroup ||
+      (h.group_name || '').startsWith(`${selectedGroup}/`);
     return matchesSearch && matchesGroup;
   });
 
@@ -216,23 +219,28 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               >
                 全部 ({hosts.length})
               </button>
-              {groups.map((grp) => (
-                <button
-                  key={grp}
-                  onClick={() => setSelectedGroup(grp)}
-                  className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors shrink-0 flex items-center space-x-1 ${
-                    selectedGroup === grp
-                      ? 'bg-fs-primary text-white'
-                      : 'bg-fs-surface text-fs-textMuted hover:bg-fs-hover hover:text-fs-text'
-                  }`}
-                >
-                  <Folder className="w-3 h-3 text-fs-warning" />
-                  <span>{grp}</span>
-                  <span className="text-[10px]">
-                    ({hosts.filter((h) => (h.group_name || '默认分组') === grp).length})
-                  </span>
-                </button>
-              ))}
+              {groups.map((grp) => {
+                const groupCount = hosts.filter((h) => {
+                  const g = h.group_name || '默认分组';
+                  return g === grp || g.startsWith(`${grp}/`);
+                }).length;
+
+                return (
+                  <button
+                    key={grp}
+                    onClick={() => setSelectedGroup(grp)}
+                    className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors shrink-0 flex items-center space-x-1 ${
+                      selectedGroup === grp
+                        ? 'bg-fs-primary text-white'
+                        : 'bg-fs-surface text-fs-textMuted hover:bg-fs-hover hover:text-fs-text'
+                    }`}
+                  >
+                    <Folder className="w-3 h-3 text-fs-warning shrink-0" />
+                    <span>{grp.replace(/\//g, ' / ')}</span>
+                    <span className="text-[10px]">({groupCount})</span>
+                  </button>
+                );
+              })}
             </div>
           )}
 

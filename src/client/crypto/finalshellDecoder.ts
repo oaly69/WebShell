@@ -443,9 +443,41 @@ export function decodeFinalShellPassword(cipherBase64: string): string {
 }
 
 /**
+ * Extracts hierarchical group name from a relative file path (e.g. from folder import)
+ * Example: 'conn/香港节点/NAT/hk-01.json' -> '香港节点/NAT'
+ * Example: 'Web集群/生产/server.json' -> 'Web集群/生产'
+ */
+export function extractGroupFromPath(relativePath: string): string {
+  if (!relativePath) return '';
+  const normalized = relativePath.replace(/\\/g, '/');
+  const parts = normalized.split('/').map((s) => s.trim()).filter(Boolean);
+  if (parts.length <= 1) {
+    return '';
+  }
+  // All parts except the filename
+  const dirSegments = parts.slice(0, parts.length - 1);
+  // Strip 'conn' or 'connections' root folder (FinalShell's default root folder)
+  if (
+    dirSegments.length > 1 &&
+    (dirSegments[0].toLowerCase() === 'conn' || dirSegments[0].toLowerCase() === 'connections')
+  ) {
+    dirSegments.shift();
+  } else if (
+    dirSegments.length === 1 &&
+    (dirSegments[0].toLowerCase() === 'conn' || dirSegments[0].toLowerCase() === 'connections')
+  ) {
+    dirSegments.shift();
+  }
+  return dirSegments.join('/');
+}
+
+/**
  * Normalizes raw JSON / text from FinalShell exports into DecryptedHost items
  */
-export function parseFinalShellConfig(text: string): Partial<DecryptedHost>[] {
+export function parseFinalShellConfig(
+  text: string,
+  inferredGroup?: string
+): Partial<DecryptedHost>[] {
   const result: Partial<DecryptedHost>[] = [];
   const trimmed = text.trim();
   if (!trimmed) return result;
@@ -501,14 +533,29 @@ export function parseFinalShellConfig(text: string): Partial<DecryptedHost>[] {
     // In FinalShell, auth_type: 1 is publickey/privatekey, 2 is password
     const isKey = item.auth_type === 1 || item.auth_type === 'private_key' || (privateKey.length > 0 && !decryptedPassword);
 
-    const group_name = (
+    let rawItemParent = (
       item.parent_name ||
       item.folder ||
       item.group ||
       item.group_name ||
       item.category ||
-      '默认分组'
-    ).trim() || '默认分组';
+      ''
+    ).trim().replace(/\\/g, '/');
+
+    // Remove leading/trailing slashes
+    rawItemParent = rawItemParent.replace(/^\/+|\/+$/g, '');
+
+    let group_name = '默认分组';
+    if (inferredGroup && inferredGroup.trim()) {
+      const cleanInferred = inferredGroup.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+      if (rawItemParent && rawItemParent !== cleanInferred && !cleanInferred.endsWith(rawItemParent)) {
+        group_name = `${cleanInferred}/${rawItemParent}`;
+      } else {
+        group_name = cleanInferred;
+      }
+    } else if (rawItemParent) {
+      group_name = rawItemParent;
+    }
 
     result.push({
       name,
