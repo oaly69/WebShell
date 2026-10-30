@@ -15,7 +15,7 @@ while true; do
   echo "===FS_PS==="
   (ps -eo pid,user,pcpu,pmem,comm --sort=-pcpu 2>/dev/null || ps aux 2>/dev/null || ps 2>/dev/null) | head -n 15
   echo "===FS_SYS==="
-  cat /etc/os-release 2>/dev/null | grep -E '^(PRETTY_NAME|NAME)=' | head -n 1
+  (grep -m 1 '^PRETTY_NAME=' /etc/os-release 2>/dev/null || grep -m 1 '^NAME=' /etc/os-release 2>/dev/null || ([ -f /etc/redhat-release ] && echo "PRETTY_NAME=$(cat /etc/redhat-release 2>/dev/null)") || ([ -f /etc/issue ] && echo "PRETTY_NAME=$(head -n 1 /etc/issue 2>/dev/null | sed 's/\\\\.*//')"))
   echo -n "UNAME="; uname -s -r -m 2>/dev/null
   echo -n "HOSTNAME="; cat /etc/hostname 2>/dev/null || uname -n 2>/dev/null
   echo -n "UPTIME="; cat /proc/uptime 2>/dev/null
@@ -279,8 +279,10 @@ export class MetricsParser {
 
         const sysLines = sysSection.split('\n').map((l) => l.trim()).filter(Boolean);
         for (const line of sysLines) {
-          if (line.startsWith('PRETTY_NAME=') || line.startsWith('NAME=')) {
-            os = line.replace(/^(PRETTY_NAME|NAME)=/, '').replace(/^["']|["']$/g, '');
+          if (line.startsWith('PRETTY_NAME=')) {
+            os = line.substring(12).replace(/^["']|["']$/g, '').trim();
+          } else if (line.startsWith('NAME=') && !os) {
+            os = line.substring(5).replace(/^["']|["']$/g, '').trim();
           } else if (line.startsWith('UNAME=')) {
             const uval = line.substring(6).trim();
             const uparts = uval.split(/\s+/);

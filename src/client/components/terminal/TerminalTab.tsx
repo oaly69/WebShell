@@ -80,7 +80,15 @@ const getXtermTheme = (mode: 'dark' | 'light') => {
 };
 
 export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
-  const { closeSession, openSession, toggleSftp, isBroadcastMode, setBroadcastMode } = useSessionStore();
+  const {
+    closeSession,
+    openSession,
+    disconnectSession,
+    reconnectSession,
+    toggleSftp,
+    isBroadcastMode,
+    setBroadcastMode,
+  } = useSessionStore();
   const { theme } = useThemeStore();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -127,6 +135,7 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
       fontSize,
       fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, monospace',
       theme: getXtermTheme(theme),
+      scrollback: 10000,
     });
 
     const fitAddon = new FitAddon();
@@ -149,10 +158,12 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
     // Fit safely after layout paint
     requestAnimationFrame(() => {
       try {
+        const el = containerRef.current;
+        if (!el || el.offsetParent === null || el.clientWidth < 80 || el.clientHeight < 40) return;
         fitAddon.fit();
         const cols = term.cols;
         const rows = term.rows;
-        if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+        if (cols >= 20 && rows >= 4 && session.ws && session.ws.readyState === WebSocket.OPEN) {
           session.ws.send(encodeControlMsg({ type: 'resize', cols, rows }));
         }
       } catch {}
@@ -164,14 +175,18 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
     session.term = term;
     session.fitAddon = fitAddon;
 
-    // Handle Resize / Refit
+    // Handle Resize / Refit with strict visibility and dimension guards
     const handleRefit = () => {
-      if (!fitAddonRef.current || !termRef.current) return;
+      if (!fitAddonRef.current || !termRef.current || !containerRef.current) return;
+      const el = containerRef.current;
+      if (el.offsetParent === null || el.clientWidth < 80 || el.clientHeight < 40) {
+        return;
+      }
       try {
         fitAddonRef.current.fit();
         const cols = termRef.current.cols;
         const rows = termRef.current.rows;
-        if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+        if (cols >= 20 && rows >= 4 && session.ws && session.ws.readyState === WebSocket.OPEN) {
           session.ws.send(encodeControlMsg({ type: 'resize', cols, rows }));
         }
       } catch {}
@@ -231,13 +246,15 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
 
   // Sync terminal dimensions once SSH connection is established
   useEffect(() => {
-    if (session.status === 'connected' && fitAddonRef.current && termRef.current) {
+    if (session.status === 'connected' && fitAddonRef.current && termRef.current && containerRef.current) {
+      const el = containerRef.current;
+      if (el.offsetParent === null || el.clientWidth < 80 || el.clientHeight < 40) return;
       requestAnimationFrame(() => {
         try {
           fitAddonRef.current?.fit();
           const cols = termRef.current?.cols || 80;
           const rows = termRef.current?.rows || 24;
-          if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+          if (cols >= 20 && rows >= 4 && session.ws && session.ws.readyState === WebSocket.OPEN) {
             session.ws.send(encodeControlMsg({ type: 'resize', cols, rows }));
           }
           termRef.current?.focus();
@@ -247,18 +264,14 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
   }, [session.status]);
 
   const handleReconnect = () => {
-    const hostToReconnect = session.host;
-    closeSession(session.sessionId);
-    openSession(hostToReconnect);
+    reconnectSession(session.sessionId);
   };
 
   const handleToggleConnection = () => {
     if (session.status === 'connected' || session.status === 'connecting') {
-      if (session.ws) {
-        session.ws.close();
-      }
+      disconnectSession(session.sessionId);
     } else {
-      handleReconnect();
+      reconnectSession(session.sessionId);
     }
   };
 

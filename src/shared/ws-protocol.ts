@@ -28,6 +28,9 @@ export type ClientControlMsg =
       rows: number;
     }
   | {
+      type: 'disconnect';
+    }
+  | {
       type: 'monitor_toggle';
       enabled: boolean;
     }

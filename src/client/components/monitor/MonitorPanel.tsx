@@ -62,8 +62,8 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({ metrics, className =
             <div className="space-y-1.5 text-[11px]">
               {metrics.sys.os && (
                 <div className="flex justify-between items-center text-fs-text font-mono">
-                  <span className="text-fs-textMuted">操作系统</span>
-                  <span className="truncate max-w-[150px] font-medium" title={metrics.sys.os}>
+                  <span className="text-fs-textMuted shrink-0 mr-2">操作系统</span>
+                  <span className="truncate max-w-[200px] font-medium text-right" title={metrics.sys.os}>
                     {metrics.sys.os}
                   </span>
                 </div>

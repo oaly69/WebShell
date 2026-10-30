@@ -39,6 +39,19 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ session, isV
   // Mobile active view tab: 'terminal' | 'monitor' | 'sftp' | 'snippets'
   const [mobileActiveView, setMobileActiveView] = useState<'terminal' | 'monitor' | 'sftp' | 'snippets'>('terminal');
 
+  // Screen width responsive state to avoid duplicate TerminalTab instances in DOM
+  const [isMobile, setIsMobile] = useState<boolean>(() => {
+    return typeof window !== 'undefined' ? window.innerWidth < 1024 : false;
+  });
+
+  useEffect(() => {
+    const handleWinResize = () => {
+      setIsMobile(window.innerWidth < 1024);
+    };
+    window.addEventListener('resize', handleWinResize);
+    return () => window.removeEventListener('resize', handleWinResize);
+  }, []);
+
   // Dragging interaction state
   const [activeDrag, setActiveDrag] = useState<'monitor' | 'bottom' | 'sftp' | null>(null);
 
@@ -172,171 +185,174 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ session, isV
         />
       )}
 
-      {/* ===================== DESKTOP LAYOUT (lg:flex) ===================== */}
-      <div className="hidden lg:flex flex-1 h-full w-full overflow-hidden">
-        {/* 1. Left: Real-time Monitor Panel */}
-        {session.isMonitorOpen && (
-          <>
-            <div
-              style={{ width: `${monitorWidth}px` }}
-              className="h-full shrink-0 overflow-hidden bg-fs-surface"
-            >
-              <MonitorPanel metrics={session.metrics} className="h-full w-full" />
-            </div>
-
-            {/* Monitor Vertical Drag Resizer */}
-            <div
-              onPointerDown={handleMonitorDragStart}
-              title="按住左右拖动调整监控面板宽度"
-              className="group relative w-1 hover:w-1.5 bg-fs-border hover:bg-fs-primary cursor-col-resize shrink-0 transition-all z-20 flex items-center justify-center"
-            >
-              <div className="w-0.5 h-6 rounded-full bg-fs-textMuted/40 group-hover:bg-white transition-colors" />
-            </div>
-          </>
-        )}
-
-        {/* 2. Center Column: Terminal on Top, SFTP + Snippets on Bottom */}
-        <div className="flex flex-1 flex-col h-full min-w-0 overflow-hidden">
-          {/* Top: Terminal & Log Area */}
-          <div className="flex flex-1 h-full min-h-0 w-full overflow-hidden relative bg-fs-bg">
-            <TerminalTab session={session} />
-          </div>
-
-          {/* Bottom Container: SFTP and Snippets */}
-          {session.isSftpOpen && (
+      {/* ===================== RESPONSIVE LAYOUT SWITCH ===================== */}
+      {!isMobile ? (
+        /* DESKTOP LAYOUT (Single TerminalTab instance) */
+        <div className="flex flex-1 h-full w-full overflow-hidden">
+          {/* 1. Left: Real-time Monitor Panel */}
+          {session.isMonitorOpen && (
             <>
-              {/* Horizontal Drag Resizer between Terminal and Bottom Panel */}
               <div
-                onPointerDown={handleBottomDragStart}
-                title="按住上下拖动调整下方面板高度"
-                className="group relative h-1 hover:h-1.5 bg-fs-border hover:bg-fs-primary cursor-row-resize shrink-0 transition-all z-20 flex items-center justify-center"
+                style={{ width: `${monitorWidth}px` }}
+                className="h-full shrink-0 overflow-hidden bg-fs-surface"
               >
-                <div className="h-0.5 w-10 rounded-full bg-fs-textMuted/40 group-hover:bg-white transition-colors" />
+                <MonitorPanel metrics={session.metrics} className="h-full w-full" />
               </div>
 
-              {/* Bottom Split Container */}
+              {/* Monitor Vertical Drag Resizer */}
               <div
-                ref={bottomRef}
-                style={{ height: `${bottomHeight}px` }}
-                className="flex w-full shrink-0 overflow-hidden bg-fs-surface"
+                onPointerDown={handleMonitorDragStart}
+                title="按住左右拖动调整监控面板宽度"
+                className="group relative w-1 hover:w-1.5 bg-fs-border hover:bg-fs-primary cursor-col-resize shrink-0 transition-all z-20 flex items-center justify-center"
               >
-                {/* Left Half: SFTP File Panel */}
-                <div
-                  style={{ width: `${sftpRatio}%` }}
-                  className="h-full shrink-0 overflow-hidden border-r border-fs-border"
-                >
-                  <SftpPanel session={session} className="h-full w-full" />
-                </div>
-
-                {/* Vertical Drag Resizer between SFTP and Snippets */}
-                <div
-                  onPointerDown={handleSftpRatioDragStart}
-                  title="按住左右拖动调整 SFTP 与快捷命令面板占比"
-                  className="group relative w-1 hover:w-1.5 bg-fs-border hover:bg-fs-primary cursor-col-resize shrink-0 transition-all z-20 flex items-center justify-center"
-                >
-                  <div className="w-0.5 h-6 rounded-full bg-fs-textMuted/40 group-hover:bg-white transition-colors" />
-                </div>
-
-                {/* Right Half: Snippets Quick Command Panel */}
-                <div
-                  style={{ width: `${100 - sftpRatio}%` }}
-                  className="flex-1 h-full min-w-0 overflow-hidden bg-fs-surface"
-                >
-                  <SnippetsPanel session={session} className="h-full w-full" />
-                </div>
+                <div className="w-0.5 h-6 rounded-full bg-fs-textMuted/40 group-hover:bg-white transition-colors" />
               </div>
             </>
           )}
+
+          {/* 2. Center Column: Terminal on Top, SFTP + Snippets on Bottom */}
+          <div className="flex flex-1 flex-col h-full min-w-0 overflow-hidden">
+            {/* Top: Terminal & Log Area */}
+            <div className="flex flex-1 h-full min-h-0 w-full overflow-hidden relative bg-fs-bg">
+              <TerminalTab session={session} />
+            </div>
+
+            {/* Bottom Container: SFTP and Snippets */}
+            {session.isSftpOpen && (
+              <>
+                {/* Horizontal Drag Resizer between Terminal and Bottom Panel */}
+                <div
+                  onPointerDown={handleBottomDragStart}
+                  title="按住上下拖动调整下方面板高度"
+                  className="group relative h-1 hover:h-1.5 bg-fs-border hover:bg-fs-primary cursor-row-resize shrink-0 transition-all z-20 flex items-center justify-center"
+                >
+                  <div className="h-0.5 w-10 rounded-full bg-fs-textMuted/40 group-hover:bg-white transition-colors" />
+                </div>
+
+                {/* Bottom Split Container */}
+                <div
+                  ref={bottomRef}
+                  style={{ height: `${bottomHeight}px` }}
+                  className="flex w-full shrink-0 overflow-hidden bg-fs-surface"
+                >
+                  {/* Left Half: SFTP File Panel */}
+                  <div
+                    style={{ width: `${sftpRatio}%` }}
+                    className="h-full shrink-0 overflow-hidden border-r border-fs-border"
+                  >
+                    <SftpPanel session={session} className="h-full w-full" />
+                  </div>
+
+                  {/* Vertical Drag Resizer between SFTP and Snippets */}
+                  <div
+                    onPointerDown={handleSftpRatioDragStart}
+                    title="按住左右拖动调整 SFTP 与快捷命令面板占比"
+                    className="group relative w-1 hover:w-1.5 bg-fs-border hover:bg-fs-primary cursor-col-resize shrink-0 transition-all z-20 flex items-center justify-center"
+                  >
+                    <div className="w-0.5 h-6 rounded-full bg-fs-textMuted/40 group-hover:bg-white transition-colors" />
+                  </div>
+
+                  {/* Right Half: Snippets Quick Command Panel */}
+                  <div
+                    style={{ width: `${100 - sftpRatio}%` }}
+                    className="flex-1 h-full min-w-0 overflow-hidden bg-fs-surface"
+                  >
+                    <SnippetsPanel session={session} className="h-full w-full" />
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      ) : (
+        /* MOBILE LAYOUT (Single TerminalTab instance) */
+        <div className="flex flex-1 flex-col h-full w-full overflow-hidden">
+          {/* Mobile View Switcher Tab Bar */}
+          <div className="flex h-9 items-center justify-around border-b border-fs-border bg-fs-surface px-1 text-xs shrink-0">
+            <button
+              onClick={() => setMobileActiveView('terminal')}
+              className={`flex items-center space-x-1 py-1 px-2.5 rounded-lg transition-colors ${
+                mobileActiveView === 'terminal'
+                  ? 'bg-fs-primary text-white font-medium'
+                  : 'text-fs-textMuted hover:text-fs-text'
+              }`}
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              <span>终端</span>
+            </button>
 
-      {/* ===================== MOBILE LAYOUT (lg:hidden) ===================== */}
-      <div className="flex lg:hidden flex-1 flex-col h-full w-full overflow-hidden">
-        {/* Mobile View Switcher Tab Bar */}
-        <div className="flex h-9 items-center justify-around border-b border-fs-border bg-fs-surface px-1 text-xs shrink-0">
-          <button
-            onClick={() => setMobileActiveView('terminal')}
-            className={`flex items-center space-x-1 py-1 px-2.5 rounded-lg transition-colors ${
-              mobileActiveView === 'terminal'
-                ? 'bg-fs-primary text-white font-medium'
-                : 'text-fs-textMuted hover:text-fs-text'
-            }`}
-          >
-            <Terminal className="w-3.5 h-3.5" />
-            <span>终端</span>
-          </button>
+            <button
+              onClick={() => setMobileActiveView('monitor')}
+              className={`flex items-center space-x-1 py-1 px-2.5 rounded-lg transition-colors ${
+                mobileActiveView === 'monitor'
+                  ? 'bg-fs-primary text-white font-medium'
+                  : 'text-fs-textMuted hover:text-fs-text'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>监控</span>
+            </button>
 
-          <button
-            onClick={() => setMobileActiveView('monitor')}
-            className={`flex items-center space-x-1 py-1 px-2.5 rounded-lg transition-colors ${
-              mobileActiveView === 'monitor'
-                ? 'bg-fs-primary text-white font-medium'
-                : 'text-fs-textMuted hover:text-fs-text'
-            }`}
-          >
-            <Activity className="w-3.5 h-3.5" />
-            <span>监控</span>
-          </button>
+            <button
+              onClick={() => setMobileActiveView('sftp')}
+              className={`flex items-center space-x-1 py-1 px-2.5 rounded-lg transition-colors ${
+                mobileActiveView === 'sftp'
+                  ? 'bg-fs-primary text-white font-medium'
+                  : 'text-fs-textMuted hover:text-fs-text'
+              }`}
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              <span>SFTP</span>
+            </button>
 
-          <button
-            onClick={() => setMobileActiveView('sftp')}
-            className={`flex items-center space-x-1 py-1 px-2.5 rounded-lg transition-colors ${
-              mobileActiveView === 'sftp'
-                ? 'bg-fs-primary text-white font-medium'
-                : 'text-fs-textMuted hover:text-fs-text'
-            }`}
-          >
-            <FolderOpen className="w-3.5 h-3.5" />
-            <span>SFTP</span>
-          </button>
-
-          <button
-            onClick={() => setMobileActiveView('snippets')}
-            className={`flex items-center space-x-1 py-1 px-2.5 rounded-lg transition-colors ${
-              mobileActiveView === 'snippets'
-                ? 'bg-fs-primary text-white font-medium'
-                : 'text-fs-textMuted hover:text-fs-text'
-            }`}
-          >
-            <Code2 className="w-3.5 h-3.5" />
-            <span>快捷命令</span>
-          </button>
-        </div>
-
-        {/* Mobile Panels Container (TerminalTab kept alive in DOM) */}
-        <div className="flex-1 w-full overflow-hidden relative">
-          {/* Terminal View */}
-          <div
-            className={`h-full w-full ${
-              mobileActiveView === 'terminal' ? 'flex flex-col' : 'hidden'
-            }`}
-          >
-            <TerminalTab session={session} />
-            <MobileKeyBar />
+            <button
+              onClick={() => setMobileActiveView('snippets')}
+              className={`flex items-center space-x-1 py-1 px-2.5 rounded-lg transition-colors ${
+                mobileActiveView === 'snippets'
+                  ? 'bg-fs-primary text-white font-medium'
+                  : 'text-fs-textMuted hover:text-fs-text'
+              }`}
+            >
+              <Code2 className="w-3.5 h-3.5" />
+              <span>快捷命令</span>
+            </button>
           </div>
 
-          {/* Monitor View */}
-          {mobileActiveView === 'monitor' && (
-            <div className="h-full w-full overflow-hidden">
-              <MonitorPanel metrics={session.metrics} className="h-full w-full" />
+          {/* Mobile Panels Container (TerminalTab kept alive in DOM) */}
+          <div className="flex-1 w-full overflow-hidden relative">
+            {/* Terminal View */}
+            <div
+              className={`h-full w-full ${
+                mobileActiveView === 'terminal' ? 'flex flex-col' : 'hidden'
+              }`}
+            >
+              <TerminalTab session={session} />
+              <MobileKeyBar />
             </div>
-          )}
 
-          {/* SFTP View */}
-          {mobileActiveView === 'sftp' && (
-            <div className="h-full w-full overflow-hidden">
-              <SftpPanel session={session} className="h-full w-full" />
-            </div>
-          )}
+            {/* Monitor View */}
+            {mobileActiveView === 'monitor' && (
+              <div className="h-full w-full overflow-hidden">
+                <MonitorPanel metrics={session.metrics} className="h-full w-full" />
+              </div>
+            )}
 
-          {/* Snippets View */}
-          {mobileActiveView === 'snippets' && (
-            <div className="h-full w-full overflow-hidden">
-              <SnippetsPanel session={session} className="h-full w-full" />
-            </div>
-          )}
+            {/* SFTP View */}
+            {mobileActiveView === 'sftp' && (
+              <div className="h-full w-full overflow-hidden">
+                <SftpPanel session={session} className="h-full w-full" />
+              </div>
+            )}
+
+            {/* Snippets View */}
+            {mobileActiveView === 'snippets' && (
+              <div className="h-full w-full overflow-hidden">
+                <SnippetsPanel session={session} className="h-full w-full" />
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

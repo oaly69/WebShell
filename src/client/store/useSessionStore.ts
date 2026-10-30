@@ -44,11 +44,172 @@ interface SessionStoreState {
   toggleMonitor: (sessionId: string) => void;
   toggleSftp: (sessionId: string) => void;
 
+  disconnectSession: (sessionId: string) => void;
+  reconnectSession: (sessionId: string) => void;
   sendInputToActive: (text: string, autoEnter?: boolean) => void;
   broadcastCommand: (text: string, autoEnter?: boolean) => void;
 
   sftpNavigate: (sessionId: string, path: string) => void;
   sftpRefresh: (sessionId: string) => void;
+}
+
+function attachWebSocketSession(
+  sessionId: string,
+  host: DecryptedHost,
+  ws: WebSocket,
+  get: () => SessionStoreState,
+  set: (fn: (state: SessionStoreState) => Partial<SessionStoreState>) => void
+) {
+  ws.onopen = async () => {
+    let creds = host.credentials;
+    const { masterKey } = useAuthStore.getState();
+    if ((!creds || (!creds.password && !creds.privateKey)) && masterKey && host.encrypted_cred) {
+      try {
+        const { decryptCredentials } = await import('../crypto/vault');
+        creds = await decryptCredentials(masterKey, host.encrypted_cred);
+      } catch (e) {
+        console.error('Failed to decrypt host credentials on connect:', e);
+      }
+    }
+
+    const { sessions } = get();
+    const current = sessions.find((s) => s.sessionId === sessionId);
+    const cols = current?.term?.cols || 80;
+    const rows = current?.term?.rows || 24;
+
+    // Send connect handshake
+    const handshake = encodeControlMsg({
+      type: 'connect',
+      hostId: host.id,
+      hostname: host.hostname,
+      port: host.port,
+      username: host.username,
+      authType: host.auth_type,
+      password: creds?.password,
+      privateKey: creds?.privateKey,
+      passphrase: creds?.passphrase,
+      cols,
+      rows,
+    });
+    ws.send(handshake);
+
+    // Enable monitoring by default
+    const monitorReq = encodeControlMsg({
+      type: 'monitor_toggle',
+      enabled: true,
+    });
+    ws.send(monitorReq);
+  };
+
+  ws.onmessage = (event: MessageEvent) => {
+    try {
+      const { type, rawPayload } = parseIncomingFrame(event.data);
+      const { sessions } = get();
+      const current = sessions.find((s) => s.sessionId === sessionId);
+      if (!current) return;
+
+      if (type === FrameType.PTY_DATA) {
+        current.ptyLogs.push(rawPayload);
+        if (current.ptyLogs.length > 5000) {
+          current.ptyLogs.splice(0, current.ptyLogs.length - 4000);
+        }
+        for (const cb of current.onPtyDataCallbacks) {
+          cb(rawPayload);
+        }
+      } else if (type === FrameType.MONITOR_JSON) {
+        const jsonStr = new TextDecoder().decode(rawPayload);
+        const metrics = JSON.parse(jsonStr) as SystemMetrics;
+        set((state) => ({
+          sessions: state.sessions.map((s) =>
+            s.sessionId === sessionId ? { ...s, metrics } : s
+          ),
+        }));
+      } else if (type === FrameType.CONTROL_JSON) {
+        const jsonStr = new TextDecoder().decode(rawPayload);
+        const msg = JSON.parse(jsonStr) as ServerControlMsg;
+
+        for (const cb of current.onControlMsgCallbacks) {
+          try {
+            cb(msg);
+          } catch (cbErr) {
+            console.error('Control message callback error', cbErr);
+          }
+        }
+
+        if (msg.type === 'status') {
+          set((state) => ({
+            sessions: state.sessions.map((s) =>
+              s.sessionId === sessionId
+                ? { ...s, status: msg.state, errorMessage: msg.message }
+                : s
+            ),
+          }));
+
+          if (msg.state === 'connected') {
+            // Trigger initial SFTP home directory list via realpath('.')
+            get().sftpNavigate(sessionId, '.');
+          }
+        } else if (msg.type === 'sftp_list_result') {
+          set((state) => ({
+            sessions: state.sessions.map((s) =>
+              s.sessionId === sessionId
+                ? {
+                    ...s,
+                    sftpLoading: false,
+                    sftpPath: msg.success ? msg.path : s.sftpPath,
+                    sftpEntries: msg.success ? msg.entries || [] : s.sftpEntries,
+                    sftpError: msg.success ? undefined : msg.error || '读取目录失败',
+                  }
+                : s
+            ),
+          }));
+        } else if (msg.type === 'sftp_op_result') {
+          if (msg.success) {
+            set((state) => ({
+              sessions: state.sessions.map((s) =>
+                s.sessionId === sessionId ? { ...s, sftpError: undefined } : s
+              ),
+            }));
+            get().sftpRefresh(sessionId);
+          } else {
+            set((state) => ({
+              sessions: state.sessions.map((s) =>
+                s.sessionId === sessionId
+                  ? { ...s, sftpError: msg.error || `SFTP ${msg.action} 操作失败` }
+                  : s
+              ),
+            }));
+          }
+        }
+      }
+    } catch (err) {
+      console.error('WebSocket frame error', err);
+    }
+  };
+
+  ws.onerror = () => {
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.sessionId === sessionId
+          ? { ...s, status: 'error', errorMessage: 'WebSocket 连接异常' }
+          : s
+      ),
+    }));
+  };
+
+  ws.onclose = () => {
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.sessionId === sessionId
+          ? {
+              ...s,
+              status: 'disconnected',
+              errorMessage: s.errorMessage || '会话已断开连接',
+            }
+          : s
+      ),
+    }));
+  };
 }
 
 export const useSessionStore = create<SessionStoreState>((set, get) => ({
@@ -89,141 +250,92 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
       ptyLogs: [],
     };
 
-    ws.onopen = async () => {
-      let creds = host.credentials;
-      const { masterKey } = useAuthStore.getState();
-      if ((!creds || (!creds.password && !creds.privateKey)) && masterKey && host.encrypted_cred) {
-        try {
-          const { decryptCredentials } = await import('../crypto/vault');
-          creds = await decryptCredentials(masterKey, host.encrypted_cred);
-        } catch (e) {
-          console.error('Failed to decrypt host credentials on connect:', e);
-        }
-      }
-
-      // Send connect handshake
-      const handshake = encodeControlMsg({
-        type: 'connect',
-        hostId: host.id,
-        hostname: host.hostname,
-        port: host.port,
-        username: host.username,
-        authType: host.auth_type,
-        password: creds?.password,
-        privateKey: creds?.privateKey,
-        passphrase: creds?.passphrase,
-        cols: 80,
-        rows: 24,
-      });
-      ws.send(handshake);
-
-      // Enable monitoring by default
-      const monitorReq = encodeControlMsg({
-        type: 'monitor_toggle',
-        enabled: true,
-      });
-      ws.send(monitorReq);
-    };
-
-    ws.onmessage = (event: MessageEvent) => {
-      try {
-        const { type, rawPayload } = parseIncomingFrame(event.data);
-        const { sessions } = get();
-        const current = sessions.find((s) => s.sessionId === sessionId);
-        if (!current) return;
-
-        if (type === FrameType.PTY_DATA) {
-          current.ptyLogs.push(rawPayload);
-          if (current.ptyLogs.length > 3000) {
-            current.ptyLogs.splice(0, current.ptyLogs.length - 2000);
-          }
-          for (const cb of current.onPtyDataCallbacks) {
-            cb(rawPayload);
-          }
-        } else if (type === FrameType.MONITOR_JSON) {
-          const jsonStr = new TextDecoder().decode(rawPayload);
-          const metrics = JSON.parse(jsonStr) as SystemMetrics;
-          set((state) => ({
-            sessions: state.sessions.map((s) =>
-              s.sessionId === sessionId ? { ...s, metrics } : s
-            ),
-          }));
-        } else if (type === FrameType.CONTROL_JSON) {
-          const jsonStr = new TextDecoder().decode(rawPayload);
-          const msg = JSON.parse(jsonStr) as ServerControlMsg;
-
-          for (const cb of current.onControlMsgCallbacks) {
-            try {
-              cb(msg);
-            } catch (cbErr) {
-              console.error('Control message callback error', cbErr);
-            }
-          }
-
-          if (msg.type === 'status') {
-            set((state) => ({
-              sessions: state.sessions.map((s) =>
-                s.sessionId === sessionId
-                  ? { ...s, status: msg.state, errorMessage: msg.message }
-                  : s
-              ),
-            }));
-
-            if (msg.state === 'connected') {
-              // Trigger initial SFTP home directory list via realpath('.')
-              get().sftpNavigate(sessionId, '.');
-            }
-          } else if (msg.type === 'sftp_list_result') {
-            set((state) => ({
-              sessions: state.sessions.map((s) =>
-                s.sessionId === sessionId
-                  ? {
-                      ...s,
-                      sftpLoading: false,
-                      sftpPath: msg.success ? msg.path : s.sftpPath,
-                      sftpEntries: msg.success ? msg.entries || [] : s.sftpEntries,
-                      sftpError: msg.success ? undefined : msg.error || '读取目录失败',
-                    }
-                  : s
-              ),
-            }));
-          } else if (msg.type === 'sftp_op_result') {
-            if (msg.success) {
-              set((state) => ({
-                sessions: state.sessions.map((s) =>
-                  s.sessionId === sessionId ? { ...s, sftpError: undefined } : s
-                ),
-              }));
-              get().sftpRefresh(sessionId);
-            } else {
-              set((state) => ({
-                sessions: state.sessions.map((s) =>
-                  s.sessionId === sessionId
-                    ? { ...s, sftpError: msg.error || `SFTP ${msg.action} 操作失败` }
-                    : s
-                ),
-              }));
-            }
-          }
-        }
-      } catch (err) {
-        console.error('WebSocket frame error', err);
-      }
-    };
-
-    ws.onclose = () => {
-      set((state) => ({
-        sessions: state.sessions.map((s) =>
-          s.sessionId === sessionId ? { ...s, status: 'disconnected' } : s
-        ),
-      }));
-    };
-
     set((state) => ({
       sessions: [...state.sessions, newSession],
       activeSessionId: sessionId,
       activeTab: sessionId,
     }));
+
+    attachWebSocketSession(sessionId, host, ws, get, set);
+  },
+
+  disconnectSession: (sessionId) => {
+    const { sessions } = get();
+    const current = sessions.find((s) => s.sessionId === sessionId);
+    if (!current) return;
+
+    if (current.ws) {
+      try {
+        if (current.ws.readyState === WebSocket.OPEN) {
+          current.ws.send(encodeControlMsg({ type: 'disconnect' }));
+        }
+        current.ws.onclose = null;
+        current.ws.onerror = null;
+        current.ws.onmessage = null;
+        current.ws.close(1000, 'User disconnect');
+      } catch {}
+    }
+
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.sessionId === sessionId
+          ? {
+              ...s,
+              status: 'disconnected',
+              errorMessage: '已主动断开与服务器的连接',
+              ws: null,
+            }
+          : s
+      ),
+    }));
+
+    if (current.term) {
+      try {
+        current.term.write('\r\n\x1b[33m[WebShell: 已主动断开服务器连接]\x1b[0m\r\n');
+      } catch {}
+    }
+  },
+
+  reconnectSession: (sessionId) => {
+    const { sessions } = get();
+    const current = sessions.find((s) => s.sessionId === sessionId);
+    if (!current) return;
+
+    if (current.ws) {
+      try {
+        current.ws.onclose = null;
+        current.ws.onerror = null;
+        current.ws.onmessage = null;
+        current.ws.close();
+      } catch {}
+    }
+
+    if (current.term) {
+      try {
+        current.term.write('\r\n\x1b[36m[WebShell: 正在重新连接服务器...]\x1b[0m\r\n');
+      } catch {}
+    }
+
+    const { token } = useAuthStore.getState();
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/ssh?sessionId=${sessionId}&token=${encodeURIComponent(token || '')}`;
+    const ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.sessionId === sessionId
+          ? {
+              ...s,
+              status: 'connecting',
+              errorMessage: undefined,
+              ws,
+            }
+          : s
+      ),
+    }));
+
+    attachWebSocketSession(sessionId, current.host, ws, get, set);
   },
 
   closeSession: (sessionId) => {

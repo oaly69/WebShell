@@ -48,10 +48,16 @@ export class SshSessionDO extends DurableObject {
 
     server.addEventListener('close', () => {
       this.cleanup();
+      try {
+        server.close(1000, 'Normal Closure');
+      } catch {}
     });
 
     server.addEventListener('error', () => {
       this.cleanup();
+      try {
+        server.close(1011, 'Internal Error');
+      } catch {}
     });
 
     return new Response(null, { status: 101, webSocket: client });
@@ -152,6 +158,17 @@ export class SshSessionDO extends DurableObject {
           await this.sshConnectPromise.catch(() => {});
           await this.ssh.resizeShell(msg.cols, msg.rows);
         }
+        break;
+      }
+
+      case 'disconnect': {
+        this.cleanup();
+        this.sendControl({ type: 'status', state: 'disconnected', message: '已主动断开连接' });
+        try {
+          if (this.ws) {
+            this.ws.close(1000, 'User disconnect');
+          }
+        } catch {}
         break;
       }
 
