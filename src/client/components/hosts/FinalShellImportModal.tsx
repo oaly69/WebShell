@@ -82,7 +82,7 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
   onClose,
   onSuccess,
 }) => {
-  const { saveHost, addHostGroup, getHostGroups, fetchHosts } = useSyncStore();
+  const { saveHost, addHostGroup, getHostGroups, fetchHosts, hosts } = useSyncStore();
   const { isVaultLocked, masterKey } = useAuthStore();
 
   const [mode, setMode] = useState<'upload' | 'paste'>('upload');
@@ -286,7 +286,14 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
           }
         }
 
+        const existingHost = hosts.find(
+          (h) => h.hostname === item.hostname && h.port === item.port && h.username === item.username
+        ) || hosts.find(
+          (h) => h.name === item.name && h.hostname === item.hostname
+        );
+
         await saveHost({
+          id: existingHost?.id,
           name: item.name || item.hostname || '未命名服务器',
           group_name: group,
           hostname: item.hostname || '',
@@ -294,7 +301,7 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
           username: item.username || 'root',
           auth_type: item.auth_type || 'password',
           credentials: item.credentials || {},
-          sort_order: i,
+          sort_order: existingHost ? existingHost.sort_order : i,
         });
 
         count++;
@@ -537,7 +544,11 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
                   const isChecked = selectedIndices.has(idx);
                   const hasPassword = !!host.credentials?.password;
                   const hasKey = !!host.credentials?.privateKey;
-                  const groupDisplay = (host.group_name || '默认分组').replace(/\//g, ' / ');
+                  const existingHost = hosts.find(
+                    (h) => h.hostname === host.hostname && h.port === host.port && h.username === host.username
+                  ) || hosts.find(
+                    (h) => h.name === host.name && h.hostname === host.hostname
+                  );
 
                   return (
                     <div
@@ -575,12 +586,12 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
                           {host.auth_type === 'private_key' || hasKey ? (
                             <span className="flex items-center space-x-1 text-fs-info bg-fs-info/10 px-2 py-0.5 rounded">
                               <Key className="w-3 h-3" />
-                              <span>私钥认证</span>
+                              <span>{existingHost ? '更新私钥' : '私钥认证'}</span>
                             </span>
                           ) : hasPassword ? (
                             <span className="flex items-center space-x-1 text-fs-accent bg-fs-accent/10 px-2 py-0.5 rounded">
                               <Lock className="w-3 h-3" />
-                              <span>密码已解密</span>
+                              <span>{existingHost ? '将更新已存密码' : '密码已解密'}</span>
                             </span>
                           ) : (
                             <span className="text-fs-textMuted bg-fs-hover px-2 py-0.5 rounded">

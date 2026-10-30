@@ -340,103 +340,180 @@ function desDecryptEcb(ciphertext: Uint8Array, key: Uint8Array): Uint8Array {
   return unpadded;
 }
 
+const toSignedByte = (b: number): number => (b >= 128 ? b - 256 : b);
+
+function longToBytes(longVal: bigint): Uint8Array {
+  let u64 = BigInt.asUintN(64, longVal);
+  const bytes = new Uint8Array(8);
+  for (let i = 0; i < 8; i++) {
+    bytes[7 - i] = Number(u64 & 0xffn);
+    u64 >>= 8n;
+  }
+  return bytes;
+}
+
 /**
- * Java java.util.Random simulation with 48-bit LCG
+ * Java java.util.Random simulation with 48-bit LCG matching Java exactly
  */
 class JavaRandom {
-  private seed: bigint;
+  private _seed: bigint;
 
   constructor(seed: number | bigint) {
-    this.seed = (BigInt(seed) ^ 0x5deece66dn) & ((1n << 48n) - 1n);
+    const s = BigInt.asUintN(64, BigInt(seed));
+    this._seed = (s ^ 0x5deece66dn) & 0xffffffffffffn;
   }
 
-  private next(bits: number): number {
-    this.seed = (this.seed * 0x5deece66dn + 0xbn) & ((1n << 48n) - 1n);
-    const val = Number(this.seed >> BigInt(48 - bits));
-    return (val << (32 - bits)) >> (32 - bits);
+  private _next(bits: number): number {
+    this._seed = (this._seed * 0x5deece66dn + 0xbn) & 0xffffffffffffn;
+    const result = this._seed >> BigInt(48 - bits);
+    return Number(BigInt.asIntN(32, result));
   }
 
   public nextInt(bound: number): number {
-    let r = this.next(31);
+    if (bound <= 0) return 0;
+    let r = this._next(31);
     const m = bound - 1;
     if ((bound & m) === 0) {
-      r = Number((BigInt(bound) * BigInt(r)) >> 31n);
-    } else {
-      let u = r;
-      while (u - (r = u % bound) + m < 0) {
-        u = this.next(31);
-      }
+      return Number((BigInt(bound) * BigInt(r)) >> 31n);
+    }
+    let u = r;
+    r = u % bound;
+    while (u - r + m < 0) {
+      u = this._next(31);
+      r = u % bound;
     }
     return r;
   }
 
   public nextLong(): bigint {
-    const high = BigInt(this.next(32));
-    const low = BigInt(this.next(32)) & 0xffffffffn;
-    return (high << 32n) | low;
+    const hi = BigInt(this._next(32));
+    const lo = BigInt(this._next(32));
+    return BigInt.asIntN(64, (hi << 32n) + lo);
   }
 }
 
 /**
  * Derives the DES key from the first 8 bytes (head) of FinalShell encrypted password
  */
-function deriveDesKey(head: Uint8Array): Uint8Array {
-  let val = head[5];
-  if (val > 127) val -= 256;
+function deriveDesKey(headBytes: Uint8Array): Uint8Array {
+  const head5 = toSignedByte(headBytes[5]);
+  const randForDivisor = new JavaRandom(BigInt(head5));
+  let divisor = randForDivisor.nextInt(127);
+  if (divisor === 0) divisor = 1;
 
-  const jrTemp = new JavaRandom(val);
-  let nextIntVal = jrTemp.nextInt(127);
-  if (nextIntVal === 0) nextIntVal = 1;
-
-  const ks = 3680984568597093857n / BigInt(nextIntVal);
+  const ks = 3680984568597093857n / BigInt(divisor);
   const random = new JavaRandom(ks);
+  const t = toSignedByte(headBytes[0]);
 
-  const t = head[0];
-  for (let i = 0; i < t; i++) {
-    random.nextLong();
+  if (t > 0) {
+    for (let i = 0; i < t; i++) {
+      random.nextLong();
+    }
   }
 
   const n = random.nextLong();
+  const r2 = new JavaRandom(n);
 
-  // 8-byte Big-Endian buffer of long n
-  const buf = new Uint8Array(8);
-  for (let i = 7; i >= 0; i--) {
-    buf[i] = Number((n >> BigInt((7 - i) * 8)) & 0xffn);
+  const ld: bigint[] = [
+    BigInt(toSignedByte(headBytes[4])),
+    r2.nextLong(),
+    BigInt(toSignedByte(headBytes[7])),
+    BigInt(toSignedByte(headBytes[3])),
+    r2.nextLong(),
+    BigInt(toSignedByte(headBytes[1])),
+    random.nextLong(),
+    BigInt(toSignedByte(headBytes[2])),
+  ];
+
+  const keyData = new Uint8Array(64);
+  let offset = 0;
+  for (const l of ld) {
+    keyData.set(longToBytes(l), offset);
+    offset += 8;
   }
 
-  const hash = md5(buf);
+  const hash = md5(keyData);
   return hash.slice(0, 8);
 }
 
+function base64ToBytes(base64: string): Uint8Array {
+  if (typeof atob === 'function') {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const lookup = new Uint8Array(256);
+  for (let i = 0; i < chars.length; i++) {
+    lookup[chars.charCodeAt(i)] = i;
+  }
+  let len = base64.length;
+  if (base64.endsWith('==')) len -= 2;
+  else if (base64.endsWith('=')) len -= 1;
+  const bytes = new Uint8Array(Math.floor((len * 3) / 4));
+  let p = 0;
+  for (let i = 0; i < base64.length; i += 4) {
+    const a = lookup[base64.charCodeAt(i)];
+    const b = lookup[base64.charCodeAt(i + 1)];
+    const c = lookup[base64.charCodeAt(i + 2)];
+    const d = lookup[base64.charCodeAt(i + 3)];
+    bytes[p++] = (a << 2) | (b >> 4);
+    if (p < bytes.length) bytes[p++] = ((b & 15) << 4) | (c >> 2);
+    if (p < bytes.length) bytes[p++] = ((c & 3) << 6) | (d & 63);
+  }
+  return bytes;
+}
+
 /**
- * Decodes a FinalShell encrypted password string
+ * Decodes a FinalShell encrypted password string (supports v3.x dynamic key and v2.x fixed key)
  */
 export function decodeFinalShellPassword(cipherBase64: string): string {
   if (!cipherBase64 || typeof cipherBase64 !== 'string') return '';
   const trimmed = cipherBase64.trim();
 
   // If plaintext password without base64 length or invalid base64, return directly
-  if (!/^[A-Za-z0-9+/=]+$/.test(trimmed) || trimmed.length < 16) {
+  if (!/^[A-Za-z0-9+/=]+$/.test(trimmed) || trimmed.length < 8) {
     return trimmed;
   }
 
   try {
-    const binary = atob(trimmed);
-    const raw = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      raw[i] = binary.charCodeAt(i);
+    const raw = base64ToBytes(trimmed);
+
+    // Attempt 1: FinalShell 3.x (8 bytes head + DES-ECB ciphertext)
+    if (raw.length > 8 && (raw.length - 8) % 8 === 0) {
+      try {
+        const head = raw.slice(0, 8);
+        const body = raw.slice(8);
+        const key = deriveDesKey(head);
+        const decryptedBytes = desDecryptEcb(body, key);
+        const result = new TextDecoder('utf-8', { fatal: true }).decode(decryptedBytes);
+        // Ensure no illegal control characters (allow common whitespace: \t, \r, \n)
+        if (result && !/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(result)) {
+          return result;
+        }
+      } catch {
+        // Fall through
+      }
     }
 
-    if (raw.length <= 8 || (raw.length - 8) % 8 !== 0) {
-      return trimmed;
+    // Attempt 2: FinalShell 2.x (fixed key 'finashel' 8 bytes DES ECB)
+    if (raw.length >= 8 && raw.length % 8 === 0) {
+      try {
+        const v2Key = new Uint8Array([102, 105, 110, 97, 115, 104, 101, 108]); // 'finashel'
+        const decryptedBytes = desDecryptEcb(raw, v2Key);
+        const result = new TextDecoder('utf-8', { fatal: true }).decode(decryptedBytes);
+        if (result && !/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(result)) {
+          return result;
+        }
+      } catch {
+        // Fall through
+      }
     }
 
-    const head = raw.slice(0, 8);
-    const body = raw.slice(8);
-    const key = deriveDesKey(head);
-    const decryptedBytes = desDecryptEcb(body, key);
-    const result = new TextDecoder('utf-8').decode(decryptedBytes);
-    return result || trimmed;
+    return trimmed;
   } catch {
     return trimmed;
   }
@@ -519,10 +596,17 @@ export function parseFinalShellConfig(
   for (const item of rawItems) {
     if (!item || typeof item !== 'object') continue;
 
-    const rawHost = (item.host || item.ip || item.hostname || item.address || '').trim();
+    const rawHost = (
+      item.host ||
+      item['#host'] ||
+      item.ip ||
+      item.hostname ||
+      item.address ||
+      ''
+    ).trim();
     if (!rawHost) continue;
 
-    let parsedPort = parseInt(item.port || item.tunnel_port, 10);
+    let parsedPort = parseInt(item.port || item['#port'] || item.tunnel_port, 10);
     let parsedHost = rawHost;
 
     // Handle [ipv6]:port, e.g. [2001:db8::1]:2222
@@ -550,10 +634,16 @@ export function parseFinalShellConfig(
 
     const hostname = parsedHost;
     const port = parsedPort || 22;
-    const name = (item.name || item.server_name || item.text || hostname).trim();
-    const username = (item.user_name || item.user || item.username || 'root').trim();
+    const name = (item.name || item['#name'] || item.server_name || item.text || hostname).trim();
+    const username = (
+      item.user_name ||
+      item['#user_name'] ||
+      item.user ||
+      item.username ||
+      'root'
+    ).trim();
 
-    const rawPassword = item.password || item.pass || item.pwd || '';
+    const rawPassword = item.password || item['#password'] || item.pass || item.pwd || '';
     const decryptedPassword = decodeFinalShellPassword(rawPassword);
 
     const privateKey = (item.private_key || item.key || item.private_key_text || '').trim();

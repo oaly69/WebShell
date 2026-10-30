@@ -5,6 +5,7 @@ import { useAuthStore } from '../../store/useAuthStore';
 import type { DecryptedHost } from '@shared/types';
 import { GroupManagerModal } from '../common/GroupManagerModal';
 import { FinalShellImportModal } from './FinalShellImportModal';
+import { decodeFinalShellPassword } from '../../crypto/finalshellDecoder';
 import {
   Server,
   Plus,
@@ -548,12 +549,14 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({
                     type="password"
                     placeholder="请输入密码（将在客户端加密存储）"
                     value={editingHost.credentials.password || ''}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const decoded = decodeFinalShellPassword(val);
                       setEditingHost({
                         ...editingHost,
-                        credentials: { ...editingHost.credentials, password: e.target.value },
-                      })
-                    }
+                        credentials: { ...editingHost.credentials, password: decoded },
+                      });
+                    }}
                     className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
                   />
                 </div>
