@@ -90,26 +90,27 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
   },
 
   saveHost: async (hostData) => {
-    const { token, masterKey } = useAuthStore.getState();
-    if (!token || !masterKey) throw new Error('Please login first');
+    const { token, masterKey, isVaultLocked } = useAuthStore.getState();
+    if (!token) throw new Error('请先登录账号');
+    if (!masterKey || isVaultLocked) throw new Error('安全密码箱处于锁定状态，请先输入主密码解锁');
 
     const encrypted_cred = await encryptCredentials(masterKey, hostData.credentials);
 
+    const isUpdate = !!hostData.id;
     const payload = {
-      id: hostData.id,
-      name: hostData.name,
-      group_name: hostData.group_name,
-      hostname: hostData.hostname,
-      port: hostData.port,
-      username: hostData.username,
+      ...(isUpdate ? { id: hostData.id } : {}),
+      name: hostData.name.trim(),
+      group_name: (hostData.group_name || '默认分组').trim(),
+      hostname: hostData.hostname.trim(),
+      port: hostData.port || 22,
+      username: hostData.username.trim(),
       auth_type: hostData.auth_type,
       encrypted_cred,
-      jump_host_id: hostData.jump_host_id,
-      keepalive_interval: hostData.keepalive_interval,
-      sort_order: hostData.sort_order,
+      jump_host_id: hostData.jump_host_id || null,
+      keepalive_interval: hostData.keepalive_interval ?? 30,
+      sort_order: hostData.sort_order ?? 0,
     };
 
-    const isUpdate = !!hostData.id;
     const url = isUpdate ? `/api/hosts/${hostData.id}` : '/api/hosts';
     const method = isUpdate ? 'PUT' : 'POST';
 
@@ -122,7 +123,10 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
       body: JSON.stringify(payload),
     });
 
-    if (!res.ok) throw new Error('Save host failed');
+    if (!res.ok) {
+      const errJson = (await res.json().catch(() => ({}))) as any;
+      throw new Error(errJson.error || `保存主机连接失败 (HTTP ${res.status})`);
+    }
     await get().fetchHosts();
   },
 
@@ -156,13 +160,13 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
 
   saveSnippet: async (snippet) => {
     const { token } = useAuthStore.getState();
-    if (!token) return;
+    if (!token) throw new Error('请先登录账号');
 
     const isUpdate = !!snippet.id;
     const url = isUpdate ? `/api/snippets/${snippet.id}` : '/api/snippets';
     const method = isUpdate ? 'PUT' : 'POST';
 
-    await fetch(url, {
+    const res = await fetch(url, {
       method,
       headers: {
         'Content-Type': 'application/json',
@@ -170,6 +174,11 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
       },
       body: JSON.stringify(snippet),
     });
+
+    if (!res.ok) {
+      const errJson = (await res.json().catch(() => ({}))) as any;
+      throw new Error(errJson.error || `保存快捷命令失败 (HTTP ${res.status})`);
+    }
     await get().fetchSnippets();
   },
 

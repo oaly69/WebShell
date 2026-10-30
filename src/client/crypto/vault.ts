@@ -62,7 +62,25 @@ export async function deriveMasterKey(
     },
     passwordKey,
     { name: 'AES-GCM', length: 256 },
-    false,
+    true,
+    ['encrypt', 'decrypt']
+  );
+}
+
+// Export CryptoKey to Base64 raw bytes for session storage
+export async function exportMasterKey(key: CryptoKey): Promise<string> {
+  const raw = await crypto.subtle.exportKey('raw', key);
+  return bytesToBase64(new Uint8Array(raw));
+}
+
+// Import CryptoKey from Base64 raw bytes
+export async function importMasterKey(base64RawKey: string): Promise<CryptoKey> {
+  const bytes = base64ToBytes(base64RawKey);
+  return await crypto.subtle.importKey(
+    'raw',
+    bytes as unknown as BufferSource,
+    { name: 'AES-GCM', length: 256 },
+    true,
     ['encrypt', 'decrypt']
   );
 }

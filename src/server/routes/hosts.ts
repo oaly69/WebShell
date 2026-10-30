@@ -36,52 +36,69 @@ hostsRouter.get('/', async (c) => {
 hostsRouter.post('/', async (c) => {
   const user = c.get('user');
   const db = getDb(c.env.DB);
-  const body = await c.req.json<Omit<HostRecord, 'updated_at' | 'user_id'>>();
+  try {
+    const body = await c.req.json<Omit<HostRecord, 'updated_at' | 'user_id'>>();
+    if (!body.name || !body.hostname || !body.username || !body.encrypted_cred) {
+      return c.json({ error: '缺少主机名称、主机地址、用户名或加密凭据' }, 400);
+    }
 
-  const id = body.id || crypto.randomUUID();
-  const now = Date.now();
+    const id = body.id || crypto.randomUUID();
+    const now = Date.now();
 
-  await db.insert(hosts).values({
-    id,
-    user_id: user.sub,
-    name: body.name,
-    group_name: body.group_name || '默认分组',
-    hostname: body.hostname,
-    port: body.port || 22,
-    username: body.username,
-    auth_type: body.auth_type,
-    encrypted_cred: body.encrypted_cred,
-    jump_host_id: body.jump_host_id || null,
-    keepalive_interval: body.keepalive_interval ?? 30,
-    sort_order: body.sort_order ?? 0,
-    updated_at: now,
-  });
+    await db.insert(hosts).values({
+      id,
+      user_id: user.sub,
+      name: body.name,
+      group_name: body.group_name || '默认分组',
+      hostname: body.hostname,
+      port: body.port || 22,
+      username: body.username,
+      auth_type: body.auth_type || 'password',
+      encrypted_cred: body.encrypted_cred,
+      jump_host_id: body.jump_host_id || null,
+      keepalive_interval: body.keepalive_interval ?? 30,
+      sort_order: body.sort_order ?? 0,
+      updated_at: now,
+    });
 
-  return c.json({ success: true, id });
+    return c.json({ success: true, id });
+  } catch (err: any) {
+    console.error('POST /api/hosts error:', err);
+    return c.json({ error: err.message || '保存主机数据库写入失败' }, 500);
+  }
 });
 
 hostsRouter.put('/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const db = getDb(c.env.DB);
-  const body = await c.req.json<Partial<HostRecord>>();
+  try {
+    const body = await c.req.json<Partial<HostRecord>>();
+    const now = Date.now();
+    await db
+      .update(hosts)
+      .set({
+        ...body,
+        updated_at: now,
+      })
+      .where(and(eq(hosts.id, id), eq(hosts.user_id, user.sub)));
 
-  const now = Date.now();
-  await db
-    .update(hosts)
-    .set({
-      ...body,
-      updated_at: now,
-    })
-    .where(and(eq(hosts.id, id), eq(hosts.user_id, user.sub)));
-
-  return c.json({ success: true });
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error('PUT /api/hosts error:', err);
+    return c.json({ error: err.message || '更新主机失败' }, 500);
+  }
 });
 
 hostsRouter.delete('/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const db = getDb(c.env.DB);
-  await db.delete(hosts).where(and(eq(hosts.id, id), eq(hosts.user_id, user.sub)));
-  return c.json({ success: true });
+  try {
+    await db.delete(hosts).where(and(eq(hosts.id, id), eq(hosts.user_id, user.sub)));
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error('DELETE /api/hosts error:', err);
+    return c.json({ error: err.message || '删除主机失败' }, 500);
+  }
 });

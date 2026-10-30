@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useSyncStore } from '../../store/useSyncStore';
 import { useSessionStore } from '../../store/useSessionStore';
+import { useAuthStore } from '../../store/useAuthStore';
 import type { DecryptedHost } from '@shared/types';
 import { GroupManagerModal } from '../common/GroupManagerModal';
 import {
@@ -15,6 +16,8 @@ import {
   ChevronDown,
   Folder,
   FolderCog,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
 
 interface HostManagerModalProps {
@@ -33,10 +36,13 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
     deleteHostGroup,
   } = useSyncStore();
   const { openSession } = useSessionStore();
+  const { masterKey } = useAuthStore();
 
   const [search, setSearch] = useState('');
   const [editingHost, setEditingHost] = useState<DecryptedHost | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   // Group Management states
@@ -70,6 +76,37 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
   const handleConnect = (host: DecryptedHost) => {
     openSession(host);
     onClose();
+  };
+
+  const handleSaveHost = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingHost) return;
+    setSaveError(null);
+
+    if (!editingHost.name.trim()) {
+      setSaveError('请输入主机显示名称');
+      return;
+    }
+    if (!editingHost.hostname.trim()) {
+      setSaveError('请输入主机名或 IP 地址');
+      return;
+    }
+    if (!editingHost.username.trim()) {
+      setSaveError('请输入 SSH 登录用户名');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await saveHost(editingHost);
+      setIsFormOpen(false);
+      setEditingHost(null);
+    } catch (err: any) {
+      console.error('Save host error:', err);
+      setSaveError(err.message || '保存主机连接失败，请检查网络或重新登录');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -214,14 +251,13 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
           </div>
 
           {isFormOpen && editingHost ? (
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                await saveHost(editingHost);
-                setIsFormOpen(false);
-              }}
-              className="flex-1 overflow-y-auto p-4 space-y-3.5"
-            >
+            <form onSubmit={handleSaveHost} className="flex-1 overflow-y-auto p-4 space-y-3.5">
+              {saveError && (
+                <div className="flex items-start space-x-2 rounded-xl bg-fs-danger/10 border border-fs-danger/30 p-2.5 text-xs text-fs-danger">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{saveError}</span>
+                </div>
+              )}
               <div>
                 <label className="block text-xs text-fs-text mb-1">主机显示名称</label>
                 <input
@@ -420,9 +456,11 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                 </button>
                 <button
                   type="submit"
-                  className="rounded bg-fs-primary hover:bg-fs-primaryHover px-4 py-1.5 text-xs font-medium text-white"
+                  disabled={isSaving}
+                  className="flex items-center space-x-1.5 rounded bg-fs-primary hover:bg-fs-primaryHover px-4 py-1.5 text-xs font-medium text-white shadow disabled:opacity-50 transition-all"
                 >
-                  保存连接
+                  {isSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{isSaving ? '正在保存...' : '保存连接'}</span>
                 </button>
               </div>
             </form>
