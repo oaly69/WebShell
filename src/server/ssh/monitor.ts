@@ -16,9 +16,11 @@ while true; do
   (ps -eo pid,user,pcpu,pmem,comm --sort=-pcpu 2>/dev/null || ps aux 2>/dev/null || ps 2>/dev/null) | head -n 15
   echo "===FS_SYS==="
   cat /etc/os-release 2>/dev/null | grep -E '^(PRETTY_NAME|NAME)=' | head -n 1
-  uname -s -r -m 2>/dev/null
-  cat /etc/hostname 2>/dev/null || uname -n 2>/dev/null
-  cat /proc/uptime 2>/dev/null
+  echo -n "UNAME="; uname -s -r -m 2>/dev/null
+  echo -n "HOSTNAME="; cat /etc/hostname 2>/dev/null || uname -n 2>/dev/null
+  echo -n "UPTIME="; cat /proc/uptime 2>/dev/null
+  echo -n "CPUMODEL="; grep -E '^(model name|Hardware|Processor)' /proc/cpuinfo 2>/dev/null | head -n 1 | sed 's/.*:[ \t]*//'
+  echo -n "CPUCORES="; (grep -c '^processor' /proc/cpuinfo 2>/dev/null || nproc 2>/dev/null || echo 1)
   echo "---FS_METRIC_END---"
   sleep 2
 done
@@ -272,11 +274,42 @@ export class MetricsParser {
         let arch = '';
         let hostname = '';
         let uptimeStr = '';
+        let cpuModel = '';
+        let cpuCores = 1;
 
         const sysLines = sysSection.split('\n').map((l) => l.trim()).filter(Boolean);
         for (const line of sysLines) {
           if (line.startsWith('PRETTY_NAME=') || line.startsWith('NAME=')) {
             os = line.replace(/^(PRETTY_NAME|NAME)=/, '').replace(/^["']|["']$/g, '');
+          } else if (line.startsWith('UNAME=')) {
+            const uval = line.substring(6).trim();
+            const uparts = uval.split(/\s+/);
+            if (uparts.length >= 3) {
+              kernel = uparts[1] || '';
+              arch = uparts[2] || '';
+            } else {
+              kernel = uval;
+            }
+          } else if (line.startsWith('HOSTNAME=')) {
+            hostname = line.substring(9).trim();
+          } else if (line.startsWith('UPTIME=')) {
+            const upval = line.substring(7).trim();
+            const totalSeconds = parseFloat(upval.split(/\s+/)[0]) || 0;
+            const days = Math.floor(totalSeconds / 86400);
+            const hours = Math.floor((totalSeconds % 86400) / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+            if (days > 0) {
+              uptimeStr = `${days}天 ${hours}小时 ${minutes}分`;
+            } else if (hours > 0) {
+              uptimeStr = `${hours}小时 ${minutes}分`;
+            } else {
+              uptimeStr = `${Math.max(1, minutes)}分钟`;
+            }
+          } else if (line.startsWith('CPUMODEL=')) {
+            cpuModel = line.substring(9).trim();
+          } else if (line.startsWith('CPUCORES=')) {
+            cpuCores = parseInt(line.substring(9).trim(), 10) || 1;
           } else if (line.includes('Linux') || line.includes('Darwin') || line.includes('BSD')) {
             const uparts = line.split(/\s+/);
             if (uparts.length >= 3) {
@@ -304,13 +337,15 @@ export class MetricsParser {
           }
         }
 
-        if (os || kernel || arch || hostname || uptimeStr) {
+        if (os || kernel || arch || hostname || uptimeStr || cpuModel) {
           sysInfo = {
             os: os || 'Linux',
             kernel,
             arch,
             hostname,
             uptime: uptimeStr || '刚启动',
+            cpuModel: cpuModel || undefined,
+            cpuCores: cpuCores || 1,
           };
         }
       }
@@ -319,7 +354,7 @@ export class MetricsParser {
         timestamp,
         cpu: {
           percent: cpuPercent,
-          cores: 1,
+          cores: sysInfo?.cpuCores || 1,
           loadAvg,
         },
         mem: {

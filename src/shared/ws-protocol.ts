@@ -57,6 +57,8 @@ export type ClientControlMsg =
       type: 'sftp_readfile';
       reqId: string;
       path: string;
+      encoding?: 'utf-8' | 'base64';
+      maxBytes?: number;
     }
   | {
       type: 'sftp_writefile';

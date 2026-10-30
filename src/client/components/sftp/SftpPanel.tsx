@@ -10,15 +10,17 @@ import {
   ArrowUp,
   RefreshCw,
   FolderPlus,
+  FilePlus,
   Trash2,
   Download,
   X,
   Save,
   Upload,
   Edit3,
+  Edit2,
   AlertCircle,
   Home,
-  HardDrive,
+  Loader2,
 } from 'lucide-react';
 import { encodeControlMsg } from '@shared/ws-protocol';
 
@@ -34,6 +36,7 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' })
   const [editorLoading, setEditorLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [downloadingPath, setDownloadingPath] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const currentPath = session.sftpPath || '/';
@@ -62,13 +65,13 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' })
     sftpNavigate(session.sessionId, '.');
   };
 
-  const handleEntryClick = (entry: any) => {
+  const handleEntryClick = (entry: SftpEntry) => {
     if (entry.isDirectory) {
       sftpNavigate(session.sessionId, entry.path);
     }
   };
 
-  const handleEntryDoubleClick = (entry: any) => {
+  const handleEntryDoubleClick = (entry: SftpEntry) => {
     if (entry.isDirectory) {
       sftpNavigate(session.sessionId, entry.path);
     } else {
@@ -76,62 +79,88 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' })
     }
   };
 
+  // Open file in Monaco Editor
   const openEditor = (filePath: string) => {
-    if (!session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+    if (!session.ws || session.ws.readyState !== WebSocket.OPEN) {
+      alert('SSH/SFTP 会话未连接');
+      return;
+    }
     setEditorLoading(true);
 
     const reqId = crypto.randomUUID();
-    const handleMessage = (e: MessageEvent) => {
-      try {
-        if (typeof e.data === 'string') {
-          const msg = JSON.parse(e.data);
-          if (msg.type === 'sftp_file_content' && msg.reqId === reqId) {
-            session.ws?.removeEventListener('message', handleMessage);
-            setEditorLoading(false);
-            if (!msg.error) {
-              setEditingFile({ path: filePath, content: msg.content || '' });
-            } else {
-              alert(`读取文件失败: ${msg.error}`);
+    const timer = setTimeout(() => {
+      session.onControlMsgCallbacks.delete(onControl);
+      setEditorLoading(false);
+      alert('读取文件超时，请检查网络或重试');
+    }, 15000);
+
+    const onControl = (msg: any) => {
+      if (msg.type === 'sftp_file_content' && msg.reqId === reqId) {
+        clearTimeout(timer);
+        session.onControlMsgCallbacks.delete(onControl);
+        setEditorLoading(false);
+
+        if (!msg.error) {
+          let content = msg.content || '';
+          if (msg.encoding === 'base64') {
+            try {
+              const binaryStr = atob(content);
+              const bytes = new Uint8Array(binaryStr.length);
+              for (let i = 0; i < binaryStr.length; i++) {
+                bytes[i] = binaryStr.charCodeAt(i);
+              }
+              content = new TextDecoder('utf-8').decode(bytes);
+            } catch {
+              content = msg.content;
             }
           }
+          setEditingFile({ path: filePath, content });
+        } else {
+          alert(`读取文件失败: ${msg.error}`);
         }
-      } catch {}
+      }
     };
 
-    session.ws.addEventListener('message', handleMessage);
+    session.onControlMsgCallbacks.add(onControl);
     session.ws.send(
       encodeControlMsg({
         type: 'sftp_readfile',
         reqId,
         path: filePath,
+        encoding: 'utf-8',
+        maxBytes: 10 * 1024 * 1024,
       })
     );
   };
 
+  // Save edited file back to server
   const saveEditedFile = () => {
     if (!editingFile || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
     setSaveLoading(true);
 
     const reqId = crypto.randomUUID();
-    const handleMessage = (e: MessageEvent) => {
-      try {
-        if (typeof e.data === 'string') {
-          const msg = JSON.parse(e.data);
-          if (msg.type === 'sftp_op_result' && msg.reqId === reqId && msg.action === 'writefile') {
-            session.ws?.removeEventListener('message', handleMessage);
-            setSaveLoading(false);
-            if (msg.success) {
-              setEditingFile(null);
-              sftpRefresh(session.sessionId);
-            } else {
-              alert(`保存文件失败: ${msg.error}`);
-            }
-          }
+    const timer = setTimeout(() => {
+      session.onControlMsgCallbacks.delete(onControl);
+      setSaveLoading(false);
+      alert('保存文件超时');
+    }, 15000);
+
+    const onControl = (msg: any) => {
+      if (msg.type === 'sftp_op_result' && msg.reqId === reqId && msg.action === 'writefile') {
+        clearTimeout(timer);
+        session.onControlMsgCallbacks.delete(onControl);
+        setSaveLoading(false);
+
+        if (msg.success) {
+          setEditingFile(null);
+          sftpRefresh(session.sessionId);
+        } else {
+          alert(`保存文件失败: ${msg.error || '未知错误'}`);
         }
-      } catch {}
+      }
     };
 
-    session.ws.addEventListener('message', handleMessage);
+    session.onControlMsgCallbacks.add(onControl);
     session.ws.send(
       encodeControlMsg({
         type: 'sftp_writefile',
@@ -143,12 +172,13 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' })
     );
   };
 
+  // File Upload
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !session.ws || session.ws.readyState !== WebSocket.OPEN) return;
 
-    if (file.size > 20 * 1024 * 1024) {
-      alert('网页版暂仅支持上传 20MB 以内的小文件');
+    if (file.size > 50 * 1024 * 1024) {
+      alert('网页版暂支持上传 50MB 以内的文件');
       return;
     }
 
@@ -161,31 +191,34 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' })
       const arrayBuffer = await file.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
       let binaryStr = '';
-      for (let i = 0; i < bytes.length; i++) {
-        binaryStr += String.fromCharCode(bytes[i]);
+      const chunkSize = 8192;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binaryStr += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize) as any);
       }
       const base64Content = btoa(binaryStr);
 
       const reqId = crypto.randomUUID();
-      const handleMessage = (ev: MessageEvent) => {
-        try {
-          if (typeof ev.data === 'string') {
-            const msg = JSON.parse(ev.data);
-            if (msg.type === 'sftp_op_result' && msg.reqId === reqId && msg.action === 'writefile') {
-              session.ws?.removeEventListener('message', handleMessage);
-              setUploading(false);
-              if (fileInputRef.current) fileInputRef.current.value = '';
-              if (msg.success) {
-                sftpRefresh(session.sessionId);
-              } else {
-                alert(`上传失败: ${msg.error}`);
-              }
-            }
+      const timer = setTimeout(() => {
+        session.onControlMsgCallbacks.delete(onControl);
+        setUploading(false);
+      }, 30000);
+
+      const onControl = (msg: any) => {
+        if (msg.type === 'sftp_op_result' && msg.reqId === reqId && msg.action === 'writefile') {
+          clearTimeout(timer);
+          session.onControlMsgCallbacks.delete(onControl);
+          setUploading(false);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+
+          if (msg.success) {
+            sftpRefresh(session.sessionId);
+          } else {
+            alert(`上传失败: ${msg.error}`);
           }
-        } catch {}
+        }
       };
 
-      session.ws.addEventListener('message', handleMessage);
+      session.onControlMsgCallbacks.add(onControl);
       session.ws.send(
         encodeControlMsg({
           type: 'sftp_writefile',
@@ -201,45 +234,134 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' })
     }
   };
 
+  // File Download (Supports all binary files via base64 transfer)
   const handleDownload = (entry: SftpEntry) => {
     if (entry.isDirectory) return;
-    if (!session.ws || session.ws.readyState !== WebSocket.OPEN) return;
+    if (!session.ws || session.ws.readyState !== WebSocket.OPEN) {
+      alert('SSH/SFTP 会话未连接');
+      return;
+    }
 
+    setDownloadingPath(entry.path);
     const reqId = crypto.randomUUID();
-    const handleMessage = (e: MessageEvent) => {
-      try {
-        if (typeof e.data === 'string') {
-          const msg = JSON.parse(e.data);
-          if (msg.type === 'sftp_file_content' && msg.reqId === reqId) {
-            session.ws?.removeEventListener('message', handleMessage);
-            if (!msg.error) {
-              const blob = new Blob([msg.content], { type: 'application/octet-stream' });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = entry.name;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-              URL.revokeObjectURL(url);
-            } else {
-              alert(`下载失败: ${msg.error}`);
+    const timer = setTimeout(() => {
+      session.onControlMsgCallbacks.delete(onControl);
+      setDownloadingPath(null);
+      alert('下载超时，请重试');
+    }, 30000);
+
+    const onControl = (msg: any) => {
+      if (msg.type === 'sftp_file_content' && msg.reqId === reqId) {
+        clearTimeout(timer);
+        session.onControlMsgCallbacks.delete(onControl);
+        setDownloadingPath(null);
+
+        if (!msg.error) {
+          let blob: Blob;
+          if (msg.encoding === 'base64') {
+            const binaryStr = atob(msg.content);
+            const len = binaryStr.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+              bytes[i] = binaryStr.charCodeAt(i);
             }
+            blob = new Blob([bytes], { type: 'application/octet-stream' });
+          } else {
+            blob = new Blob([msg.content], { type: 'text/plain;charset=utf-8' });
           }
+
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = entry.name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        } else {
+          alert(`下载失败: ${msg.error}`);
         }
-      } catch {}
+      }
     };
 
-    session.ws.addEventListener('message', handleMessage);
+    session.onControlMsgCallbacks.add(onControl);
     session.ws.send(
       encodeControlMsg({
         type: 'sftp_readfile',
         reqId,
         path: entry.path,
+        encoding: 'base64',
+        maxBytes: 50 * 1024 * 1024,
       })
     );
   };
 
+  // Create New File
+  const handleCreateFile = () => {
+    const name = prompt('请输入新文件名称:');
+    if (!name || !name.trim()) return;
+    const newFile = currentPath.endsWith('/')
+      ? `${currentPath}${name.trim()}`
+      : `${currentPath}/${name.trim()}`;
+
+    if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+      const reqId = crypto.randomUUID();
+      session.ws.send(
+        encodeControlMsg({
+          type: 'sftp_writefile',
+          reqId,
+          path: newFile,
+          content: '',
+          encoding: 'utf-8',
+        })
+      );
+    }
+  };
+
+  // Create New Folder
+  const handleCreateFolder = () => {
+    const name = prompt('请输入新文件夹名称:');
+    if (!name || !name.trim()) return;
+    const newDir = currentPath.endsWith('/')
+      ? `${currentPath}${name.trim()}`
+      : `${currentPath}/${name.trim()}`;
+
+    if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+      const reqId = crypto.randomUUID();
+      session.ws.send(
+        encodeControlMsg({
+          type: 'sftp_mkdir',
+          reqId,
+          path: newDir,
+        })
+      );
+    }
+  };
+
+  // Rename File / Folder
+  const handleRename = (entry: SftpEntry) => {
+    const newName = prompt(`请输入「${entry.name}」的新名称:`, entry.name);
+    if (!newName || !newName.trim() || newName.trim() === entry.name) return;
+
+    const parentDir = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
+    const targetPath = parentDir.endsWith('/')
+      ? `${parentDir}${newName.trim()}`
+      : `${parentDir}/${newName.trim()}`;
+
+    if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+      const reqId = crypto.randomUUID();
+      session.ws.send(
+        encodeControlMsg({
+          type: 'sftp_rename',
+          reqId,
+          oldPath: entry.path,
+          newPath: targetPath,
+        })
+      );
+    }
+  };
+
+  // Delete File / Folder
   const handleDelete = (path: string, isDirectory: boolean) => {
     if (!confirm(`确定删除 ${isDirectory ? '文件夹' : '文件'} ${path} 吗?`)) return;
     if (session.ws && session.ws.readyState === WebSocket.OPEN) {
@@ -255,22 +377,6 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' })
     }
   };
 
-  const handleCreateFolder = () => {
-    const name = prompt('请输入新文件夹名称:');
-    if (!name) return;
-    const newDir = currentPath.endsWith('/') ? `${currentPath}${name}` : `${currentPath}/${name}`;
-    if (session.ws && session.ws.readyState === WebSocket.OPEN) {
-      const reqId = crypto.randomUUID();
-      session.ws.send(
-        encodeControlMsg({
-          type: 'sftp_mkdir',
-          reqId,
-          path: newDir,
-        })
-      );
-    }
-  };
-
   const formatFileSize = (size: number) => {
     if (size < 1024) return `${size} B`;
     if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
@@ -280,7 +386,7 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' })
   return (
     <div className={`flex h-full w-full flex-col bg-fs-surface select-none overflow-hidden ${className}`}>
       {/* 1. Header Tab & Action Toolbar (FinalShell Style) */}
-      <div className="flex h-8 items-center justify-between border-b border-fs-border px-2.5 bg-fs-bg/60 text-xs">
+      <div className="flex h-8 items-center justify-between border-b border-fs-border px-2.5 bg-fs-bg/60 text-xs shrink-0">
         {/* Left: Tab Title & Navigation Controls */}
         <div className="flex items-center space-x-1 flex-1 mr-2 overflow-hidden">
           <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded font-semibold text-fs-text shrink-0">
@@ -321,8 +427,9 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' })
           </form>
 
           {editorLoading && (
-            <span className="text-[11px] text-fs-info animate-pulse shrink-0 hidden sm:inline">
-              正在读取文件...
+            <span className="text-[11px] text-fs-info animate-pulse shrink-0 hidden sm:inline flex items-center space-x-1">
+              <Loader2 className="w-3 h-3 animate-spin inline" />
+              <span>正在读取文件...</span>
             </span>
           )}
         </div>
@@ -341,8 +448,16 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' })
             title="上传文件到当前目录"
             className="flex items-center space-x-1 px-2 py-1 rounded hover:bg-fs-hover text-fs-text text-[11px] disabled:opacity-50 transition-colors"
           >
-            <Upload className="w-3.5 h-3.5 text-fs-info" />
+            <Upload className={`w-3.5 h-3.5 text-fs-info ${uploading ? 'animate-bounce' : ''}`} />
             <span>{uploading ? '上传中...' : '上传'}</span>
+          </button>
+          <button
+            onClick={handleCreateFile}
+            title="新建文件"
+            className="flex items-center space-x-1 px-2 py-1 rounded hover:bg-fs-hover text-fs-text text-[11px] transition-colors"
+          >
+            <FilePlus className="w-3.5 h-3.5 text-fs-info" />
+            <span className="hidden sm:inline">新建文件</span>
           </button>
           <button
             onClick={handleCreateFolder}
@@ -350,7 +465,7 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' })
             className="flex items-center space-x-1 px-2 py-1 rounded hover:bg-fs-hover text-fs-text text-[11px] transition-colors"
           >
             <FolderPlus className="w-3.5 h-3.5 text-fs-accent" />
-            <span>新建目录</span>
+            <span className="hidden sm:inline">新建目录</span>
           </button>
           <button
             onClick={() => sftpRefresh(session.sessionId)}
@@ -377,7 +492,7 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' })
               <th className="py-1 px-3">文件名</th>
               <th className="py-1 px-3 w-24">大小</th>
               <th className="py-1 px-3 w-24">权限</th>
-              <th className="py-1 px-3 w-28 text-right">操作</th>
+              <th className="py-1 px-3 w-32 text-right">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-fs-border/40 text-fs-text">
@@ -388,65 +503,84 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' })
                 </td>
               </tr>
             ) : (
-              session.sftpEntries.map((entry) => (
-                <tr
-                  key={entry.path}
-                  onClick={() => handleEntryClick(entry)}
-                  onDoubleClick={() => handleEntryDoubleClick(entry)}
-                  className="hover:bg-fs-hover/80 cursor-pointer transition-colors group"
-                >
-                  <td className="py-1.5 px-3 flex items-center space-x-2 truncate">
-                    {entry.isDirectory ? (
-                      <Folder className="w-4 h-4 text-fs-warning shrink-0" />
-                    ) : (
-                      <FileCode className="w-4 h-4 text-fs-info shrink-0" />
-                    )}
-                    <span className="truncate font-mono">{entry.name}</span>
-                  </td>
-                  <td className="py-1.5 px-3 font-mono text-fs-textMuted">
-                    {entry.isDirectory ? '-' : formatFileSize(entry.size)}
-                  </td>
-                  <td className="py-1.5 px-3 font-mono text-fs-textMuted">
-                    {entry.permissions || '-'}
-                  </td>
-                  <td className="py-1.5 px-3 text-right space-x-1">
-                    {!entry.isDirectory && (
-                      <>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openEditor(entry.path);
-                          }}
-                          title="在线编辑"
-                          className="p-1 rounded hover:bg-fs-active text-fs-textMuted hover:text-fs-info"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDownload(entry);
-                          }}
-                          title="下载文件"
-                          className="p-1 rounded hover:bg-fs-active text-fs-textMuted hover:text-fs-accent"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDelete(entry.path, entry.isDirectory);
-                      }}
-                      title="删除"
-                      className="p-1 rounded hover:bg-fs-active text-fs-textMuted hover:text-fs-danger"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </td>
-                </tr>
-              ))
+              session.sftpEntries.map((entry) => {
+                const isDownloading = downloadingPath === entry.path;
+
+                return (
+                  <tr
+                    key={entry.path}
+                    onClick={() => handleEntryClick(entry)}
+                    onDoubleClick={() => handleEntryDoubleClick(entry)}
+                    className="hover:bg-fs-hover/80 cursor-pointer transition-colors group"
+                  >
+                    <td className="py-1.5 px-3 flex items-center space-x-2 truncate">
+                      {entry.isDirectory ? (
+                        <Folder className="w-4 h-4 text-fs-warning shrink-0" />
+                      ) : (
+                        <FileCode className="w-4 h-4 text-fs-info shrink-0" />
+                      )}
+                      <span className="truncate font-mono">{entry.name}</span>
+                    </td>
+                    <td className="py-1.5 px-3 font-mono text-fs-textMuted">
+                      {entry.isDirectory ? '-' : formatFileSize(entry.size)}
+                    </td>
+                    <td className="py-1.5 px-3 font-mono text-fs-textMuted">
+                      {entry.permissions || '-'}
+                    </td>
+                    <td className="py-1.5 px-3 text-right space-x-1 shrink-0">
+                      {!entry.isDirectory && (
+                        <>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEditor(entry.path);
+                            }}
+                            title="在线编辑"
+                            className="p-1 rounded hover:bg-fs-active text-fs-textMuted hover:text-fs-info"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownload(entry);
+                            }}
+                            disabled={isDownloading}
+                            title="下载文件"
+                            className="p-1 rounded hover:bg-fs-active text-fs-textMuted hover:text-fs-accent disabled:opacity-50"
+                          >
+                            {isDownloading ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-fs-accent" />
+                            ) : (
+                              <Download className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        </>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRename(entry);
+                        }}
+                        title="重命名"
+                        className="p-1 rounded hover:bg-fs-active text-fs-textMuted hover:text-fs-warning"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(entry.path, entry.isDirectory);
+                        }}
+                        title="删除"
+                        className="p-1 rounded hover:bg-fs-active text-fs-textMuted hover:text-fs-danger"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -458,15 +592,15 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' })
           <div className="flex h-[85vh] w-[90vw] max-w-5xl flex-col rounded-2xl border border-fs-border bg-fs-surface shadow-2xl overflow-hidden">
             <div className="flex h-10 items-center justify-between border-b border-fs-border px-4 bg-fs-bg/60">
               <span className="font-mono text-xs font-semibold text-fs-text truncate">
-                {editingFile.path}
+                在线编辑: {editingFile.path}
               </span>
               <div className="flex items-center space-x-2">
                 <button
                   onClick={saveEditedFile}
                   disabled={saveLoading}
-                  className="flex items-center space-x-1.5 rounded bg-fs-accent hover:bg-fs-accent/90 px-3 py-1 text-xs font-medium text-white shadow transition-colors"
+                  className="flex items-center space-x-1.5 rounded bg-fs-accent hover:bg-fs-accent/90 px-3 py-1 text-xs font-medium text-white shadow transition-colors disabled:opacity-50"
                 >
-                  <Save className="w-3.5 h-3.5" />
+                  {saveLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                   <span>{saveLoading ? '保存中...' : '保存'}</span>
                 </button>
                 <button

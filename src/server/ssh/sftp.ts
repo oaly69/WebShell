@@ -267,8 +267,12 @@ export class SftpClient {
     return res.type === SFTP_MSG.STATUS && res.reader.readUint32() === SFTP_STATUS.OK;
   }
 
-  // Read File Content (for Monaco Editor)
-  public async readFile(remotePath: string, maxBytes: number = 5 * 1024 * 1024): Promise<{ content: string; truncated: boolean }> {
+  // Read File Content (for Monaco Editor or Download)
+  public async readFile(
+    remotePath: string,
+    maxBytes: number = 50 * 1024 * 1024,
+    encoding: 'utf-8' | 'base64' = 'utf-8'
+  ): Promise<{ content: string; truncated: boolean; encoding: string }> {
     const openRes = await this.request(SFTP_MSG.OPEN, (w, id) => {
       w.writeUint32(id);
       w.writeString(remotePath);
@@ -328,9 +332,22 @@ export class SftpClient {
       cur += c.length;
     }
 
+    let content = '';
+    if (encoding === 'base64') {
+      let binary = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < full.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, full.subarray(i, i + chunkSize) as any);
+      }
+      content = btoa(binary);
+    } else {
+      content = new TextDecoder('utf-8').decode(full);
+    }
+
     return {
-      content: new TextDecoder('utf-8').decode(full),
+      content,
       truncated,
+      encoding,
     };
   }
 

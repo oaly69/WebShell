@@ -111,6 +111,8 @@ export interface SystemMetrics {
     arch?: string;
     hostname?: string;
     uptime?: string;
+    cpuModel?: string;
+    cpuCores?: number;
   };
 }
 

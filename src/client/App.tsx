@@ -19,6 +19,7 @@ export const App: React.FC = () => {
   const [isHostManagerOpen, setIsHostManagerOpen] = useState(false);
   const [isUserManagementOpen, setIsUserManagementOpen] = useState(false);
   const [isSnippetsOpen, setIsSnippetsOpen] = useState(false);
+  const [initialEditHost, setInitialEditHost] = useState<any>(null);
 
   // PWA Install Prompt
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -35,12 +36,18 @@ export const App: React.FC = () => {
     };
 
     const handleOpenSnippets = () => setIsSnippetsOpen(true);
+    const handleOpenEditHost = (e: any) => {
+      setInitialEditHost(e.detail || null);
+      setIsHostManagerOpen(true);
+    };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstall);
     window.addEventListener('open-snippets', handleOpenSnippets);
+    window.addEventListener('open-edit-host', handleOpenEditHost);
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
       window.removeEventListener('open-snippets', handleOpenSnippets);
+      window.removeEventListener('open-edit-host', handleOpenEditHost);
     };
   }, []);
 
@@ -113,7 +120,14 @@ export const App: React.FC = () => {
       </div>
 
       {/* Host Manager Dialog */}
-      <HostManagerModal isOpen={isHostManagerOpen} onClose={() => setIsHostManagerOpen(false)} />
+      <HostManagerModal
+        isOpen={isHostManagerOpen}
+        onClose={() => {
+          setIsHostManagerOpen(false);
+          setInitialEditHost(null);
+        }}
+        initialEditHost={initialEditHost}
+      />
 
       {/* Admin User Management Dialog */}
       <UserManagementModal isOpen={isUserManagementOpen} onClose={() => setIsUserManagementOpen(false)} />

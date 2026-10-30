@@ -84,6 +84,17 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({ metrics, className =
                   </span>
                 </div>
               )}
+              {(metrics.sys.cpuModel || metrics.sys.cpuCores) && (
+                <div className="flex justify-between items-center text-fs-text font-mono">
+                  <span className="text-fs-textMuted">处理器</span>
+                  <span
+                    className="truncate max-w-[155px] text-[10px]"
+                    title={`${metrics.sys.cpuModel || 'CPU'} × ${metrics.sys.cpuCores || metrics.cpu.cores || 1}核`}
+                  >
+                    {metrics.sys.cpuModel ? `${metrics.sys.cpuModel} ` : ''}× {metrics.sys.cpuCores || metrics.cpu.cores || 1}核
+                  </span>
+                </div>
+              )}
               {metrics.sys.uptime && (
                 <div className="flex justify-between items-center text-fs-text font-mono">
                   <span className="text-fs-textMuted flex items-center space-x-1">

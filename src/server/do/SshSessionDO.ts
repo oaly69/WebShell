@@ -249,13 +249,15 @@ export class SshSessionDO extends DurableObject {
       case 'sftp_readfile': {
         try {
           await this.ensureSftp();
-          const res = await this.sftp!.readFile(msg.path);
+          const encoding = (msg as any).encoding || 'utf-8';
+          const maxBytes = (msg as any).maxBytes || 50 * 1024 * 1024;
+          const res = await this.sftp!.readFile(msg.path, maxBytes, encoding);
           this.sendControl({
             type: 'sftp_file_content',
             reqId: msg.reqId,
             path: msg.path,
             content: res.content,
-            encoding: 'utf-8',
+            encoding: res.encoding,
             truncated: res.truncated,
           });
         } catch (err: any) {

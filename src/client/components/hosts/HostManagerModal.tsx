@@ -25,9 +25,14 @@ import {
 interface HostManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialEditHost?: DecryptedHost | null;
 }
 
-export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onClose }) => {
+export const HostManagerModal: React.FC<HostManagerModalProps> = ({
+  isOpen,
+  onClose,
+  initialEditHost,
+}) => {
   const {
     hosts,
     fetchHosts,
@@ -57,8 +62,15 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
   useEffect(() => {
     if (isOpen) {
       fetchHosts();
+      if (initialEditHost) {
+        setEditingHost(initialEditHost);
+        setIsFormOpen(true);
+      }
+    } else {
+      setEditingHost(null);
+      setIsFormOpen(false);
     }
-  }, [isOpen]);
+  }, [isOpen, initialEditHost]);
 
   if (!isOpen) return null;
 

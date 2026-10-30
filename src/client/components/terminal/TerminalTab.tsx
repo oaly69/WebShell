@@ -252,6 +252,16 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
     openSession(hostToReconnect);
   };
 
+  const handleToggleConnection = () => {
+    if (session.status === 'connected' || session.status === 'connecting') {
+      if (session.ws) {
+        session.ws.close();
+      }
+    } else {
+      handleReconnect();
+    }
+  };
+
   // Send Command from bottom input bar
   const handleSendCommand = (textToSend?: string) => {
     const text = (textToSend !== undefined ? textToSend : cmdInput).trim();
@@ -582,19 +592,49 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
                     <span className="text-fs-danger">广播到所有终端</span>
                   </label>
                 </div>
+                <div className="border-t border-fs-border pt-1">
+                  <div className="text-[10px] text-fs-textMuted mb-1">终端字号</div>
+                  <div className="flex items-center space-x-1">
+                    {[12, 13, 14, 16].map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => setFontSize(s)}
+                        className={`flex-1 py-0.5 rounded text-center font-mono ${
+                          fontSize === s ? 'bg-fs-primary text-white font-bold' : 'bg-fs-bg text-fs-text hover:bg-fs-hover'
+                        }`}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
           </div>
 
-          {/* Lightning / Zap (Quick Commands) */}
+          {/* Lightning: Connect / Disconnect */}
           <button
-            onClick={() => {
-              window.dispatchEvent(new CustomEvent('open-snippets'));
-            }}
-            title="快捷命令库"
-            className="p-1 rounded hover:bg-fs-hover hover:text-fs-warning transition-colors"
+            onClick={handleToggleConnection}
+            title={
+              session.status === 'connected'
+                ? '断开服务器连接'
+                : session.status === 'connecting'
+                ? '正在连接中 (点击断开)'
+                : '连接 / 重新连接服务器'
+            }
+            className={`p-1 rounded hover:bg-fs-hover transition-colors ${
+              session.status === 'connected'
+                ? 'text-fs-warning hover:text-fs-danger'
+                : session.status === 'connecting'
+                ? 'text-fs-info animate-pulse'
+                : 'text-fs-textMuted hover:text-fs-accent'
+            }`}
           >
-            <Zap className="w-3.5 h-3.5 text-fs-warning fill-fs-warning/20" />
+            <Zap
+              className={`w-3.5 h-3.5 ${
+                session.status === 'connected' ? 'fill-fs-warning/20' : ''
+              }`}
+            />
           </button>
 
           {/* Copy Selected */}
@@ -628,42 +668,16 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
             <Search className="w-3.5 h-3.5" />
           </button>
 
-          {/* Terminal Settings */}
-          <div className="relative">
-            <button
-              onClick={() => {
-                setIsSettingsOpen(!isSettingsOpen);
-                setIsHistoryOpen(false);
-                setIsOptionsOpen(false);
-              }}
-              title="终端外观设置"
-              className={`p-1 rounded hover:bg-fs-hover hover:text-fs-text transition-colors ${
-                isSettingsOpen ? 'text-fs-primary bg-fs-primary/10' : ''
-              }`}
-            >
-              <Settings className="w-3.5 h-3.5" />
-            </button>
-            {isSettingsOpen && (
-              <div className="absolute bottom-8 right-0 w-40 rounded-xl border border-fs-border bg-fs-surface shadow-2xl p-2 text-xs z-30 space-y-2">
-                <div>
-                  <div className="text-[10px] text-fs-textMuted mb-1">终端字号</div>
-                  <div className="flex items-center space-x-1">
-                    {[12, 13, 14, 16].map((s) => (
-                      <button
-                        key={s}
-                        onClick={() => setFontSize(s)}
-                        className={`flex-1 py-0.5 rounded text-center font-mono ${
-                          fontSize === s ? 'bg-fs-primary text-white font-bold' : 'bg-fs-bg text-fs-text hover:bg-fs-hover'
-                        }`}
-                      >
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          {/* Server Connection Properties / Edit */}
+          <button
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('open-edit-host', { detail: session.host }));
+            }}
+            title="编辑服务器连接信息"
+            className="p-1 rounded hover:bg-fs-hover hover:text-fs-text transition-colors"
+          >
+            <Settings className="w-3.5 h-3.5" />
+          </button>
 
           {/* Scroll to Bottom */}
           <button

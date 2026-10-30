@@ -23,6 +23,7 @@ export interface TerminalSession {
   sftpError?: string;
   ws: WebSocket | null;
   onPtyDataCallbacks: Set<(data: Uint8Array) => void>;
+  onControlMsgCallbacks: Set<(msg: any) => void>;
   ptyLogs: Uint8Array[];
   term?: any;
   fitAddon?: any;
@@ -64,6 +65,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
   openSession: (host: DecryptedHost) => {
     const sessionId = crypto.randomUUID();
     const callbacks = new Set<(data: Uint8Array) => void>();
+    const controlCallbacks = new Set<(msg: any) => void>();
 
     const { token } = useAuthStore.getState();
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -83,6 +85,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
       sftpLoading: false,
       ws,
       onPtyDataCallbacks: callbacks,
+      onControlMsgCallbacks: controlCallbacks,
       ptyLogs: [],
     };
 
@@ -148,6 +151,14 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         } else if (type === FrameType.CONTROL_JSON) {
           const jsonStr = new TextDecoder().decode(rawPayload);
           const msg = JSON.parse(jsonStr) as ServerControlMsg;
+
+          for (const cb of current.onControlMsgCallbacks) {
+            try {
+              cb(msg);
+            } catch (cbErr) {
+              console.error('Control message callback error', cbErr);
+            }
+          }
 
           if (msg.type === 'status') {
             set((state) => ({
