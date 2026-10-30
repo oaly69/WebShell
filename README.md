@@ -1,6 +1,6 @@
-# Web FinalShell (CloudShell Pro)
+# WebShell
 
-基于 **Cloudflare Workers 原生全栈架构** 的网页版 FinalShell。单 Worker 覆盖：
+> 基于 **Cloudflare Workers 原生全栈架构** 的网页版 FinalShell。单 Worker 覆盖：
 * **SSH 交互式终端**（多标签切换、分屏、Xterm.js WebGL 硬件加速）
 * **无 Agent 实时服务器监控**（CPU/内存/实时网速/磁盘/Top 进程表）
 * **可视化 SFTP 文件管理**（文件树浏览、分片上传下载、Monaco 在线代码编辑）
