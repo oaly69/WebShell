@@ -519,11 +519,38 @@ export function parseFinalShellConfig(
   for (const item of rawItems) {
     if (!item || typeof item !== 'object') continue;
 
-    const hostname = (item.host || item.ip || item.hostname || item.address || '').trim();
-    if (!hostname) continue;
+    const rawHost = (item.host || item.ip || item.hostname || item.address || '').trim();
+    if (!rawHost) continue;
 
+    let parsedPort = parseInt(item.port || item.tunnel_port, 10);
+    let parsedHost = rawHost;
+
+    // Handle [ipv6]:port, e.g. [2001:db8::1]:2222
+    const bracketPortMatch = rawHost.match(/^\[([a-fA-F0-9:]+)\]:(\d+)$/);
+    if (bracketPortMatch) {
+      parsedHost = bracketPortMatch[1];
+      parsedPort = parseInt(bracketPortMatch[2], 10) || parsedPort || 22;
+    } else {
+      const bracketMatch = rawHost.match(/^\[([a-fA-F0-9:]+)\]$/);
+      if (bracketMatch) {
+        parsedHost = bracketMatch[1];
+      } else {
+        // Handle ipv4:port or domain:port (e.g. 1.2.3.4:2222 or my.server.com:2222)
+        const colonCount = (rawHost.match(/:/g) || []).length;
+        if (colonCount === 1) {
+          const portMatch = rawHost.match(/^([a-zA-Z0-9.-]+):(\d+)$/);
+          if (portMatch) {
+            parsedHost = portMatch[1];
+            parsedPort = parseInt(portMatch[2], 10) || parsedPort || 22;
+          }
+        }
+      }
+    }
+    parsedHost = parsedHost.replace(/^\[|\]$/g, '').trim();
+
+    const hostname = parsedHost;
+    const port = parsedPort || 22;
     const name = (item.name || item.server_name || item.text || hostname).trim();
-    const port = parseInt(item.port || item.tunnel_port, 10) || 22;
     const username = (item.user_name || item.user || item.username || 'root').trim();
 
     const rawPassword = item.password || item.pass || item.pwd || '';

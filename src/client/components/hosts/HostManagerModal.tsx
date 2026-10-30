@@ -261,10 +261,13 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({
       if (bracketMatch) {
         cleanHost = bracketMatch[1];
       } else {
-        const ipv4PortMatch = cleanHost.match(/^(\d{1,3}(?:\.\d{1,3}){3}):(\d+)$/);
-        if (ipv4PortMatch) {
-          cleanHost = ipv4PortMatch[1];
-          cleanPort = parseInt(ipv4PortMatch[2], 10) || cleanPort;
+        const colonCount = (cleanHost.match(/:/g) || []).length;
+        if (colonCount === 1) {
+          const portMatch = cleanHost.match(/^([a-zA-Z0-9.-]+):(\d+)$/);
+          if (portMatch) {
+            cleanHost = portMatch[1];
+            cleanPort = parseInt(portMatch[2], 10) || cleanPort;
+          }
         }
       }
     }

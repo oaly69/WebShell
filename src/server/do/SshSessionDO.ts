@@ -7,7 +7,7 @@ import {
   encodeMonitorData,
   type ClientControlMsg,
 } from '@shared/ws-protocol';
-import { SshClient } from '../ssh/client';
+import { SshClient, normalizeHostAddress } from '../ssh/client';
 import { SftpClient } from '../ssh/sftp';
 import { MONITOR_SHELL_COMMAND, MetricsParser } from '../ssh/monitor';
 
@@ -105,9 +105,11 @@ export class SshSessionDO extends DurableObject {
         this.sftp = null;
         this.sftpInitPromise = null;
 
+        const { hostname: cleanHost, port: cleanPort } = normalizeHostAddress(msg.hostname, msg.port);
+
         this.ssh = new SshClient({
-          hostname: msg.hostname,
-          port: msg.port,
+          hostname: cleanHost,
+          port: cleanPort,
           username: msg.username,
           authType: msg.authType,
           password: msg.password,
