@@ -112,14 +112,14 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
       <div className="flex flex-col w-full max-w-md rounded-2xl border border-fs-border bg-fs-surface shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="flex h-12 items-center justify-between border-b border-fs-border px-4 bg-fs-bg/60">
-          <div className="flex items-center space-x-2 text-sm font-semibold text-white">
+          <div className="flex items-center space-x-2 text-sm font-semibold text-fs-text">
             <Folder className="w-4 h-4 text-fs-warning" />
             <span>{title}</span>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1 rounded hover:bg-fs-hover text-fs-textMuted hover:text-white"
+            className="p-1 rounded hover:bg-fs-hover text-fs-textMuted hover:text-fs-text"
           >
             <X className="w-4 h-4" />
           </button>
@@ -140,7 +140,7 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
             placeholder="输入新分组名称..."
             value={newGroupName}
             onChange={(e) => setNewGroupName(e.target.value)}
-            className="flex-1 rounded-xl bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-white placeholder-fs-textMuted focus:outline-none focus:border-fs-primary"
+            className="flex-1 rounded-xl bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-fs-text placeholder-fs-textMuted focus:outline-none focus:border-fs-primary"
           />
           <button
             type="submit"
@@ -174,7 +174,7 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
                         if (e.key === 'Enter') handleSaveRename(grp);
                         if (e.key === 'Escape') setEditingGroup(null);
                       }}
-                      className="flex-1 rounded-lg bg-fs-bg border border-fs-primary px-2.5 py-1 text-xs text-white focus:outline-none"
+                      className="flex-1 rounded-lg bg-fs-bg border border-fs-primary px-2.5 py-1 text-xs text-fs-text focus:outline-none"
                     />
                     <button
                       type="button"
@@ -188,7 +188,7 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
                     <button
                       type="button"
                       onClick={() => setEditingGroup(null)}
-                      className="p-1 rounded bg-fs-hover text-fs-textMuted hover:text-white"
+                      className="p-1 rounded bg-fs-hover text-fs-textMuted hover:text-fs-text"
                       title="取消"
                     >
                       <X className="w-3.5 h-3.5" />
@@ -198,7 +198,7 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
                   <>
                     <div className="flex items-center space-x-2">
                       <Folder className="w-3.5 h-3.5 text-fs-warning shrink-0" />
-                      <span className="font-medium text-white">{grp}</span>
+                      <span className="font-medium text-fs-text">{grp}</span>
                       {isDefault && (
                         <span className="rounded bg-fs-surface px-1.5 py-0.5 text-[10px] text-fs-textMuted border border-fs-border">
                           默认
@@ -240,7 +240,7 @@ export const GroupManagerModal: React.FC<GroupManagerModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl bg-fs-hover hover:bg-fs-active px-4 py-1.5 text-xs text-white transition-colors"
+            className="rounded-xl bg-fs-hover hover:bg-fs-active px-4 py-1.5 text-xs text-fs-text transition-colors"
           >
             完成
           </button>

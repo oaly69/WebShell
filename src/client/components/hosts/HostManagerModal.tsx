@@ -147,7 +147,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
         {/* Left: Host Tree List */}
         <div className="flex w-full md:w-1/2 flex-col border-b md:border-b-0 md:border-r border-fs-border bg-fs-bg/60 h-1/2 md:h-full">
           <div className="flex items-center justify-between border-b border-fs-border p-3">
-            <div className="flex items-center space-x-2 text-sm font-semibold text-white">
+            <div className="flex items-center space-x-2 text-sm font-semibold text-fs-text">
               <Server className="w-4 h-4 text-fs-accent" />
               <span>所有服务器 ({hosts.length})</span>
             </div>
@@ -156,7 +156,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                 type="button"
                 onClick={() => setIsGroupManagerOpen(true)}
                 title="管理服务器分组"
-                className="flex items-center space-x-1 rounded-lg bg-fs-hover hover:bg-fs-active px-2 py-1 text-xs text-fs-textMuted hover:text-white transition-colors"
+                className="flex items-center space-x-1 rounded-lg bg-fs-hover hover:bg-fs-active px-2 py-1 text-xs text-fs-textMuted hover:text-fs-text transition-colors"
               >
                 <FolderCog className="w-3.5 h-3.5 text-fs-warning" />
                 <span className="hidden sm:inline">分组</span>
@@ -195,7 +195,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                 placeholder="搜索主机名或 IP..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full rounded bg-fs-surface border border-fs-border px-3 py-1.5 pl-8 text-xs text-white placeholder-fs-textMuted focus:outline-none focus:border-fs-primary"
+                className="w-full rounded bg-fs-surface border border-fs-border px-3 py-1.5 pl-8 text-xs text-fs-text placeholder-fs-textMuted focus:outline-none focus:border-fs-primary"
               />
               <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-fs-textMuted" />
             </div>
@@ -211,7 +211,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                   <div key={group} className="select-none">
                     <div
                       onClick={() => toggleGroup(group)}
-                      className="flex items-center space-x-1.5 px-2 py-1 text-xs font-medium text-fs-textMuted hover:text-white cursor-pointer"
+                      className="flex items-center space-x-1.5 px-2 py-1 text-xs font-medium text-fs-textMuted hover:text-fs-text cursor-pointer"
                     >
                       {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                       <Folder className="w-3.5 h-3.5 text-fs-warning" />
@@ -228,7 +228,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                             className="group flex items-center justify-between rounded p-2 text-xs hover:bg-fs-hover cursor-pointer"
                           >
                             <div className="flex flex-col">
-                              <span className="font-medium text-white">{host.name}</span>
+                              <span className="font-medium text-fs-text">{host.name}</span>
                               <span className="text-[11px] text-fs-textMuted">
                                 {host.username}@{host.hostname}:{host.port}
                               </span>
@@ -274,7 +274,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
         {/* Right: Add/Edit Host Form or Hint */}
         <div className="flex w-full md:w-1/2 flex-col bg-fs-surface h-1/2 md:h-full">
           <div className="flex items-center justify-between border-b border-fs-border p-3">
-            <h3 className="text-sm font-semibold text-white">
+            <h3 className="text-sm font-semibold text-fs-text">
               {isFormOpen ? (editingHost?.id ? '编辑主机连接' : '新建主机连接') : '连接信息'}
             </h3>
             <button onClick={onClose} className="p-1 rounded hover:bg-fs-hover text-fs-textMuted">
@@ -298,7 +298,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                   placeholder="例如: 生产环境主节点"
                   value={editingHost.name}
                   onChange={(e) => setEditingHost({ ...editingHost, name: e.target.value })}
-                  className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+                  className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
                 />
               </div>
 
@@ -320,10 +320,10 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                       <select
                         value={editingHost.group_name || hostGroups[0] || '默认分组'}
                         onChange={(e) => setEditingHost({ ...editingHost, group_name: e.target.value })}
-                        className="flex-1 rounded bg-fs-bg border border-fs-border px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+                        className="flex-1 rounded bg-fs-bg border border-fs-border px-2.5 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
                       >
                         {hostGroups.map((grp) => (
-                          <option key={grp} value={grp} className="bg-fs-surface text-white">
+                          <option key={grp} value={grp} className="bg-fs-surface text-fs-text">
                             {grp}
                           </option>
                         ))}
@@ -358,7 +358,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                             }
                           }
                         }}
-                        className="flex-1 rounded bg-fs-bg border border-fs-border px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+                        className="flex-1 rounded bg-fs-bg border border-fs-border px-2.5 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
                       />
                       <button
                         type="button"
@@ -390,7 +390,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                     type="number"
                     value={editingHost.port}
                     onChange={(e) => setEditingHost({ ...editingHost, port: parseInt(e.target.value, 10) || 22 })}
-                    className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+                    className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
                   />
                 </div>
               </div>
@@ -404,7 +404,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                     placeholder="192.168.1.1 或域名"
                     value={editingHost.hostname}
                     onChange={(e) => setEditingHost({ ...editingHost, hostname: e.target.value })}
-                    className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+                    className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
                   />
                 </div>
                 <div>
@@ -415,7 +415,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                     placeholder="root"
                     value={editingHost.username}
                     onChange={(e) => setEditingHost({ ...editingHost, username: e.target.value })}
-                    className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+                    className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
                   />
                 </div>
               </div>
@@ -457,7 +457,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                         credentials: { ...editingHost.credentials, password: e.target.value },
                       })
                     }
-                    className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+                    className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
                   />
                 </div>
               ) : (
@@ -473,7 +473,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
                         credentials: { ...editingHost.credentials, privateKey: e.target.value },
                       })
                     }
-                    className="w-full rounded bg-fs-bg border border-fs-border p-2 text-xs font-mono text-white focus:outline-none focus:border-fs-primary"
+                    className="w-full rounded bg-fs-bg border border-fs-border p-2 text-xs font-mono text-fs-text focus:outline-none focus:border-fs-primary"
                   />
                 </div>
               )}

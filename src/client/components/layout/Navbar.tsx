@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useSessionStore } from '../../store/useSessionStore';
 import { useAuthStore } from '../../store/useAuthStore';
+import { useThemeStore } from '../../store/useThemeStore';
 import {
   Server,
   Plus,
@@ -15,6 +16,8 @@ import {
   LayoutDashboard,
   Menu,
   Download,
+  Sun,
+  Moon,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -48,20 +51,21 @@ export const Navbar: React.FC<NavbarProps> = ({
   } = useSessionStore();
 
   const { user, logout } = useAuthStore();
+  const { theme, toggleTheme } = useThemeStore();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const activeSession = sessions.find((s) => s.sessionId === activeSessionId);
 
   return (
-    <header className="relative flex h-11 w-full items-center justify-between border-b border-fs-border bg-fs-surface px-2 sm:px-3 select-none shrink-0 z-30">
-      {/* Left: Brand + Overview + Multi-Tab Bar */}
+    <header className="relative flex h-11 w-full items-center justify-between border-b border-fs-border bg-fs-surface px-2 sm:px-3 select-none shrink-0 z-30 transition-colors">
+      {/* Left: Brand + Overview + Multi-Tab Bar (FinalShell Style) */}
       <div className="flex items-center space-x-1.5 overflow-x-auto scrollbar-none pr-2">
         <div
           onClick={onOpenOverview}
-          className="flex items-center space-x-1.5 px-2 py-1 text-xs font-bold text-white tracking-wide shrink-0 cursor-pointer"
+          className="flex items-center space-x-1.5 px-2 py-1 text-xs font-bold text-fs-text tracking-wide shrink-0 cursor-pointer"
         >
           <Terminal className="w-4 h-4 text-fs-info" />
-          <span className="hidden sm:inline">FinalShell</span>
+          <span className="hidden sm:inline font-bold">FinalShell</span>
         </div>
 
         {/* 1. Permanent Overview Tab */}
@@ -69,7 +73,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           onClick={onOpenOverview}
           className={`flex items-center space-x-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors shrink-0 ${
             isOverviewActive
-              ? 'bg-fs-bg text-white border-t-2 border-fs-primary shadow-inner'
+              ? 'bg-fs-bg text-fs-text font-semibold border-t-2 border-fs-primary shadow-inner'
               : 'text-fs-textMuted hover:bg-fs-hover hover:text-fs-text'
           }`}
         >
@@ -99,7 +103,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               onClick={() => setActiveSession(session.sessionId)}
               className={`group flex items-center space-x-2 rounded-lg px-2.5 py-1 text-xs cursor-pointer transition-colors shrink-0 max-w-[140px] sm:max-w-[180px] ${
                 isActive
-                  ? 'bg-fs-bg text-white border-t-2 border-fs-primary shadow-inner'
+                  ? 'bg-fs-bg text-fs-text font-semibold border-t-2 border-fs-primary shadow-inner'
                   : 'text-fs-textMuted hover:bg-fs-hover hover:text-fs-text'
               }`}
             >
@@ -125,6 +129,15 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           );
         })}
+
+        {/* FinalShell Style '+' Tab Button to quickly add/open connection */}
+        <button
+          onClick={onOpenHostManager}
+          title="新建/打开服务器连接 (+)"
+          className="flex items-center justify-center w-6 h-6 rounded-lg hover:bg-fs-hover text-fs-textMuted hover:text-fs-text transition-colors shrink-0"
+        >
+          <Plus className="w-3.5 h-3.5" />
+        </button>
       </div>
 
       {/* Right Desktop Actions */}
@@ -145,7 +158,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             <button
               onClick={() => toggleSftp(activeSession.sessionId)}
-              title="切换 SFTP 文件面板"
+              title="切换 SFTP 文件与快捷命令面板"
               className={`p-1.5 rounded-lg transition-colors ${
                 activeSession.isSftpOpen
                   ? 'bg-fs-primary/20 text-fs-accent'
@@ -176,6 +189,19 @@ export const Navbar: React.FC<NavbarProps> = ({
           className="p-1.5 rounded-lg text-fs-textMuted hover:bg-fs-hover hover:text-fs-text transition-colors"
         >
           <Code2 className="w-4 h-4" />
+        </button>
+
+        {/* Theme Toggle Button (Dark / Light mode) */}
+        <button
+          onClick={toggleTheme}
+          title={theme === 'dark' ? '切换为白天模式 (Light)' : '切换为黑夜模式 (Dark)'}
+          className="p-1.5 rounded-lg text-fs-textMuted hover:bg-fs-hover hover:text-fs-text transition-colors"
+        >
+          {theme === 'dark' ? (
+            <Sun className="w-4 h-4 text-fs-warning" />
+          ) : (
+            <Moon className="w-4 h-4 text-fs-primary" />
+          )}
         </button>
 
         {user?.role === 'admin' && (
@@ -210,6 +236,14 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Mobile Hamburger Button */}
       <div className="flex sm:hidden items-center space-x-1 shrink-0">
         <button
+          onClick={toggleTheme}
+          title="切换主题"
+          className="p-1.5 rounded-lg text-fs-textMuted hover:bg-fs-hover"
+        >
+          {theme === 'dark' ? <Sun className="w-4 h-4 text-fs-warning" /> : <Moon className="w-4 h-4 text-fs-primary" />}
+        </button>
+
+        <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
           className="p-1.5 rounded-lg text-fs-text hover:bg-fs-hover"
         >
@@ -219,10 +253,30 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Mobile Dropdown Menu Drawer */}
       {mobileMenuOpen && (
-        <div className="sm:hidden absolute top-11 right-2 w-48 rounded-2xl border border-fs-border bg-fs-surface p-2 shadow-2xl flex flex-col space-y-1 z-50">
-          <div className="px-3 py-1.5 text-xs font-semibold text-white border-b border-fs-border/60">
+        <div className="sm:hidden absolute top-11 right-2 w-52 rounded-2xl border border-fs-border bg-fs-surface p-2 shadow-2xl flex flex-col space-y-1 z-50">
+          <div className="px-3 py-1.5 text-xs font-semibold text-fs-text border-b border-fs-border/60">
             {user?.username} ({user?.role === 'admin' ? '管理员' : '成员'})
           </div>
+
+          <button
+            onClick={() => {
+              toggleTheme();
+              setMobileMenuOpen(false);
+            }}
+            className="flex items-center space-x-2 px-3 py-2 rounded-xl text-xs text-fs-text hover:bg-fs-hover text-left"
+          >
+            {theme === 'dark' ? (
+              <>
+                <Sun className="w-4 h-4 text-fs-warning" />
+                <span>切换为白天模式</span>
+              </>
+            ) : (
+              <>
+                <Moon className="w-4 h-4 text-fs-primary" />
+                <span>切换为黑夜模式</span>
+              </>
+            )}
+          </button>
 
           <button
             onClick={() => {

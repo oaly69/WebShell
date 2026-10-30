@@ -24,6 +24,8 @@ export interface TerminalSession {
   ws: WebSocket | null;
   onPtyDataCallbacks: Set<(data: Uint8Array) => void>;
   ptyLogs: Uint8Array[];
+  term?: any;
+  fitAddon?: any;
 }
 
 interface SessionStoreState {

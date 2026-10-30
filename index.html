@@ -11,6 +11,17 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="FinalShell" />
     <title>Web FinalShell - 网页版终端与服务器运维中心</title>
+    <script>
+      (function() {
+        try {
+          var t = localStorage.getItem('fs_theme');
+          if (t === 'light') {
+            document.documentElement.classList.remove('dark');
+            document.documentElement.classList.add('light');
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body class="bg-fs-bg select-none">
     <div id="root"></div>

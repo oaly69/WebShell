@@ -78,7 +78,7 @@ export const AuthModal: React.FC = () => {
             )}
           </div>
           <div>
-            <h2 className="text-lg font-bold text-white tracking-wide">
+            <h2 className="text-lg font-bold text-fs-text tracking-wide">
               {token && isVaultLocked
                 ? '解锁 FinalShell 密码箱'
                 : !isSystemInitialized
@@ -114,7 +114,7 @@ export const AuthModal: React.FC = () => {
                   placeholder={!isSystemInitialized ? 'admin' : '请输入用户名'}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="w-full rounded-xl border border-fs-border bg-fs-bg px-3.5 py-2.5 text-sm text-white placeholder-fs-textMuted focus:border-fs-primary focus:outline-none transition-colors"
+                  className="w-full rounded-xl border border-fs-border bg-fs-bg px-3.5 py-2.5 text-sm text-fs-text placeholder-fs-textMuted focus:border-fs-primary focus:outline-none transition-colors"
                 />
                 <UserCheck className="absolute right-3.5 top-3 w-4 h-4 text-fs-textMuted" />
               </div>
@@ -137,7 +137,7 @@ export const AuthModal: React.FC = () => {
                 placeholder="请输入密码"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-xl border border-fs-border bg-fs-bg px-3.5 py-2.5 text-sm text-white placeholder-fs-textMuted focus:border-fs-primary focus:outline-none transition-colors"
+                className="w-full rounded-xl border border-fs-border bg-fs-bg px-3.5 py-2.5 text-sm text-fs-text placeholder-fs-textMuted focus:border-fs-primary focus:outline-none transition-colors"
               />
               <KeyRound className="absolute right-3.5 top-3 w-4 h-4 text-fs-textMuted" />
             </div>
@@ -153,7 +153,7 @@ export const AuthModal: React.FC = () => {
                   placeholder="再次输入主密码"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full rounded-xl border border-fs-border bg-fs-bg px-3.5 py-2.5 text-sm text-white placeholder-fs-textMuted focus:border-fs-primary focus:outline-none transition-colors"
+                  className="w-full rounded-xl border border-fs-border bg-fs-bg px-3.5 py-2.5 text-sm text-fs-text placeholder-fs-textMuted focus:border-fs-primary focus:outline-none transition-colors"
                 />
                 <Lock className="absolute right-3.5 top-3 w-4 h-4 text-fs-textMuted" />
               </div>

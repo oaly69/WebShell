@@ -70,7 +70,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               </div>
               <div>
                 <div className="flex items-center space-x-2">
-                  <h1 className="text-lg sm:text-xl font-bold text-white tracking-wide">
+                  <h1 className="text-lg sm:text-xl font-bold text-fs-text tracking-wide">
                     FinalShell 边缘控制台
                   </h1>
                   <span
@@ -101,7 +101,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               {user?.role === 'admin' && (
                 <button
                   onClick={onOpenUserManagement}
-                  className="flex items-center space-x-1.5 rounded-xl bg-fs-surface hover:bg-fs-hover border border-fs-border px-3.5 py-2 text-xs font-medium text-white transition-colors"
+                  className="flex items-center space-x-1.5 rounded-xl bg-fs-surface hover:bg-fs-hover border border-fs-border px-3.5 py-2 text-xs font-medium text-fs-text transition-colors"
                 >
                   <Users className="w-4 h-4 text-fs-warning" />
                   <span>用户管理</span>
@@ -128,7 +128,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               <span className="text-xs font-medium">配置服务器</span>
               <Server className="w-4 h-4 text-fs-accent" />
             </div>
-            <div className="text-2xl sm:text-3xl font-bold font-mono text-white">{hosts.length}</div>
+            <div className="text-2xl sm:text-3xl font-bold font-mono text-fs-text">{hosts.length}</div>
             <span className="text-[10px] text-fs-textMuted mt-1">{groups.length} 个自定义分组</span>
           </div>
 
@@ -150,7 +150,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               <span className="text-xs font-medium">快捷命令库</span>
               <Code2 className="w-4 h-4 text-fs-warning" />
             </div>
-            <div className="text-2xl sm:text-3xl font-bold font-mono text-white">{snippets.length}</div>
+            <div className="text-2xl sm:text-3xl font-bold font-mono text-fs-text">{snippets.length}</div>
             <span className="text-[10px] text-fs-textMuted mt-1">支持多机一键广播</span>
           </div>
 
@@ -168,7 +168,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div>
-              <h2 className="text-sm font-bold text-white flex items-center space-x-2">
+              <h2 className="text-sm font-bold text-fs-text flex items-center space-x-2">
                 <Server className="w-4 h-4 text-fs-info" />
                 <span>我的服务器工作台</span>
               </h2>
@@ -182,7 +182,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                   placeholder="搜索服务器或 IP..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="w-full rounded-xl bg-fs-surface border border-fs-border px-3 py-1.5 pl-8 text-xs text-white placeholder-fs-textMuted focus:outline-none focus:border-fs-primary"
+                  className="w-full rounded-xl bg-fs-surface border border-fs-border px-3 py-1.5 pl-8 text-xs text-fs-text placeholder-fs-textMuted focus:outline-none focus:border-fs-primary"
                 />
                 <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-fs-textMuted" />
               </div>
@@ -256,7 +256,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                               isOnline ? 'bg-fs-accent shadow-sm shadow-fs-accent/50' : 'bg-fs-textMuted/40'
                             }`}
                           />
-                          <h3 className="font-semibold text-white text-sm truncate max-w-[170px]">
+                          <h3 className="font-semibold text-fs-text text-sm truncate max-w-[170px]">
                             {host.name}
                           </h3>
                         </div>
@@ -312,7 +312,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center space-x-2">
                 <Code2 className="w-4 h-4 text-fs-warning" />
-                <h3 className="text-xs font-bold text-white">快捷命令库速览</h3>
+                <h3 className="text-xs font-bold text-fs-text">快捷命令库速览</h3>
               </div>
               <button
                 onClick={onOpenSnippets}
@@ -329,7 +329,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                   onClick={onOpenSnippets}
                   className="rounded-xl border border-fs-border bg-fs-bg/60 hover:bg-fs-hover px-3 py-1.5 text-xs text-fs-text flex items-center space-x-2 cursor-pointer transition-colors"
                 >
-                  <span className="font-medium text-white">{s.title}</span>
+                  <span className="font-medium text-fs-text">{s.title}</span>
                   <span className="text-[10px] text-fs-textMuted font-mono truncate max-w-[140px]">
                     {s.command}
                   </span>

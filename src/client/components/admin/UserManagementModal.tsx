@@ -136,11 +136,11 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({ isOpen
               <Users className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-white">用户权限与成员管理</h2>
+              <h2 className="text-sm font-bold text-fs-text">用户权限与成员管理</h2>
               <p className="text-[11px] text-fs-textMuted">不可自助注册，仅管理员可分配新账号。用户数据绝对物理与密钥隔离</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-fs-hover text-fs-textMuted hover:text-white">
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-fs-hover text-fs-textMuted hover:text-fs-text">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -176,7 +176,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({ isOpen
                   placeholder="例如: alice"
                   value={newUsername}
                   onChange={(e) => setNewUsername(e.target.value)}
-                  className="w-full rounded-lg bg-fs-surface border border-fs-border px-3 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+                  className="w-full rounded-lg bg-fs-surface border border-fs-border px-3 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
                 />
               </div>
               <div>
@@ -187,7 +187,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({ isOpen
                   placeholder="至少 6 位密码"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full rounded-lg bg-fs-surface border border-fs-border px-3 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+                  className="w-full rounded-lg bg-fs-surface border border-fs-border px-3 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
                 />
               </div>
               <div>
@@ -195,7 +195,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({ isOpen
                 <select
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value as any)}
-                  className="w-full rounded-lg bg-fs-surface border border-fs-border px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+                  className="w-full rounded-lg bg-fs-surface border border-fs-border px-2.5 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
                 >
                   <option value="user">普通成员 (User)</option>
                   <option value="admin">管理员 (Admin)</option>
@@ -248,7 +248,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({ isOpen
                   const isSelf = u.id === currentUser?.id;
                   return (
                     <tr key={u.id} className="hover:bg-fs-hover/50">
-                      <td className="py-3 px-5 font-medium text-white flex items-center space-x-2">
+                      <td className="py-3 px-5 font-medium text-fs-text flex items-center space-x-2">
                         {u.role === 'admin' ? (
                           <Shield className="w-3.5 h-3.5 text-fs-warning" />
                         ) : (

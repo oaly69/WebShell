@@ -135,7 +135,7 @@ export const SnippetsDrawer: React.FC<SnippetsDrawerProps> = ({ isOpen, onClose 
           </button>
           <button
             onClick={onClose}
-            className="p-1 rounded hover:bg-fs-hover text-fs-textMuted hover:text-white"
+            className="p-1 rounded hover:bg-fs-hover text-fs-textMuted hover:text-fs-text"
           >
             <X className="w-4 h-4" />
           </button>
@@ -157,7 +157,7 @@ export const SnippetsDrawer: React.FC<SnippetsDrawerProps> = ({ isOpen, onClose 
           className={`px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
             selectedCategory === 'all'
               ? 'bg-fs-primary text-white'
-              : 'bg-fs-hover text-fs-textMuted hover:text-white'
+              : 'bg-fs-hover text-fs-textMuted hover:text-fs-text'
           }`}
         >
           全部 ({snippets.length})
@@ -172,7 +172,7 @@ export const SnippetsDrawer: React.FC<SnippetsDrawerProps> = ({ isOpen, onClose 
               className={`px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
                 selectedCategory === cat
                   ? 'bg-fs-primary text-white'
-                  : 'bg-fs-hover text-fs-textMuted hover:text-white'
+                  : 'bg-fs-hover text-fs-textMuted hover:text-fs-text'
               }`}
             >
               {cat} ({count})
@@ -189,7 +189,7 @@ export const SnippetsDrawer: React.FC<SnippetsDrawerProps> = ({ isOpen, onClose 
             placeholder="搜索命令名称、内容或分类..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 pl-8 text-xs text-white placeholder-fs-textMuted focus:outline-none focus:border-fs-primary"
+            className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 pl-8 text-xs text-fs-text placeholder-fs-textMuted focus:outline-none focus:border-fs-primary"
           />
           <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-fs-textMuted" />
         </div>
@@ -199,7 +199,7 @@ export const SnippetsDrawer: React.FC<SnippetsDrawerProps> = ({ isOpen, onClose 
       {isAdding && (
         <form onSubmit={handleFormSubmit} className="border-b border-fs-border p-3 space-y-2.5 bg-fs-bg/60">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-white">
+            <span className="text-xs font-semibold text-fs-text">
               {editingSnippetId ? '编辑命令' : '新建命令'}
             </span>
             <button
@@ -208,7 +208,7 @@ export const SnippetsDrawer: React.FC<SnippetsDrawerProps> = ({ isOpen, onClose 
                 setIsAdding(false);
                 setEditingSnippetId(null);
               }}
-              className="text-[11px] text-fs-textMuted hover:text-white"
+              className="text-[11px] text-fs-textMuted hover:text-fs-text"
             >
               取消
             </button>
@@ -220,7 +220,7 @@ export const SnippetsDrawer: React.FC<SnippetsDrawerProps> = ({ isOpen, onClose 
             placeholder="命令名称 (如: Docker 状态)"
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
-            className="w-full rounded bg-fs-bg border border-fs-border px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+            className="w-full rounded bg-fs-bg border border-fs-border px-2.5 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
           />
 
           {/* Category Selector */}
@@ -241,10 +241,10 @@ export const SnippetsDrawer: React.FC<SnippetsDrawerProps> = ({ isOpen, onClose 
                 <select
                   value={newCategory}
                   onChange={(e) => setNewCategory(e.target.value)}
-                  className="flex-1 rounded bg-fs-bg border border-fs-border px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+                  className="flex-1 rounded bg-fs-bg border border-fs-border px-2.5 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
                 >
                   {categories.map((cat) => (
-                    <option key={cat} value={cat} className="bg-fs-surface text-white">
+                    <option key={cat} value={cat} className="bg-fs-surface text-fs-text">
                       {cat}
                     </option>
                   ))}
@@ -279,7 +279,7 @@ export const SnippetsDrawer: React.FC<SnippetsDrawerProps> = ({ isOpen, onClose 
                       }
                     }
                   }}
-                  className="flex-1 rounded bg-fs-bg border border-fs-border px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-fs-primary"
+                  className="flex-1 rounded bg-fs-bg border border-fs-border px-2.5 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
                 />
                 <button
                   type="button"
@@ -312,7 +312,7 @@ export const SnippetsDrawer: React.FC<SnippetsDrawerProps> = ({ isOpen, onClose 
             placeholder="脚本命令内容 (支持多行)..."
             value={newCommand}
             onChange={(e) => setNewCommand(e.target.value)}
-            className="w-full rounded bg-fs-bg border border-fs-border p-2 text-xs font-mono text-white focus:outline-none focus:border-fs-primary"
+            className="w-full rounded bg-fs-bg border border-fs-border p-2 text-xs font-mono text-fs-text focus:outline-none focus:border-fs-primary"
           />
 
           <div className="flex items-center justify-between text-xs pt-1">
@@ -348,7 +348,7 @@ export const SnippetsDrawer: React.FC<SnippetsDrawerProps> = ({ isOpen, onClose 
               className="group rounded-lg border border-fs-border bg-fs-bg/60 p-2.5 text-xs hover:border-fs-primary/50 transition-all"
             >
               <div className="flex items-center justify-between mb-1.5">
-                <span className="font-medium text-white">{item.title}</span>
+                <span className="font-medium text-fs-text">{item.title}</span>
                 <span className="rounded bg-fs-surface px-1.5 py-0.5 text-[10px] text-fs-textMuted border border-fs-border/60">
                   {item.category}
                 </span>

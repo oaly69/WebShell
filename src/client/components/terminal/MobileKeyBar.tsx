@@ -29,7 +29,7 @@ export const MobileKeyBar: React.FC = () => {
         <button
           key={idx}
           onClick={() => handleKeyClick(k.code)}
-          className="flex h-7 items-center justify-center rounded-lg bg-fs-bg hover:bg-fs-hover active:bg-fs-active border border-fs-border px-2.5 text-xs font-mono font-medium text-white transition-colors shrink-0"
+          className="flex h-7 items-center justify-center rounded-lg bg-fs-bg hover:bg-fs-hover active:bg-fs-active border border-fs-border px-2.5 text-xs font-mono font-medium text-fs-text transition-colors shrink-0"
         >
           {k.label}
         </button>

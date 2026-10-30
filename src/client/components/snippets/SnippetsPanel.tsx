@@ -114,10 +114,10 @@ export const SnippetsPanel: React.FC<SnippetsPanelProps> = ({ session, className
   return (
     <div className={`flex h-full w-full flex-col bg-fs-surface select-none overflow-hidden ${className}`}>
       {/* 1. Header Toolbar */}
-      <div className="flex h-8 items-center justify-between border-b border-fs-border px-3 bg-fs-bg/40 text-xs shrink-0">
+      <div className="flex h-8 items-center justify-between border-b border-fs-border px-3 bg-fs-bg/60 text-xs shrink-0">
         <div className="flex items-center space-x-2 overflow-hidden">
           <Code2 className="w-3.5 h-3.5 text-fs-info shrink-0" />
-          <span className="font-semibold text-white whitespace-nowrap">快捷命令 ({filteredSnippets.length})</span>
+          <span className="font-semibold text-fs-text whitespace-nowrap">快捷命令 ({filteredSnippets.length})</span>
           {isBroadcastMode && (
             <span className="flex items-center space-x-1 text-[10px] text-fs-danger bg-fs-danger/10 px-1.5 py-0.5 rounded border border-fs-danger/20 font-medium">
               <Radio className="w-2.5 h-2.5 animate-pulse" />
@@ -169,7 +169,7 @@ export const SnippetsPanel: React.FC<SnippetsPanelProps> = ({ session, className
             className={`px-2 py-0.5 rounded-full text-[10px] whitespace-nowrap transition-colors ${
               selectedCategory === 'all'
                 ? 'bg-fs-primary text-white font-medium'
-                : 'bg-fs-hover text-fs-textMuted hover:text-white'
+                : 'bg-fs-hover text-fs-textMuted hover:text-fs-text'
             }`}
           >
             全部
@@ -182,7 +182,7 @@ export const SnippetsPanel: React.FC<SnippetsPanelProps> = ({ session, className
               className={`px-2 py-0.5 rounded-full text-[10px] whitespace-nowrap transition-colors ${
                 selectedCategory === cat
                   ? 'bg-fs-primary text-white font-medium'
-                  : 'bg-fs-hover text-fs-textMuted hover:text-white'
+                  : 'bg-fs-hover text-fs-textMuted hover:text-fs-text'
               }`}
             >
               {cat}
@@ -213,7 +213,7 @@ export const SnippetsPanel: React.FC<SnippetsPanelProps> = ({ session, className
               >
                 <div className="flex flex-col min-w-0 flex-1 mr-3">
                   <div className="flex items-center space-x-2 mb-1">
-                    <span className="text-xs font-medium text-white truncate">{snippet.title}</span>
+                    <span className="text-xs font-medium text-fs-text truncate">{snippet.title}</span>
                     <span className="rounded bg-fs-bg border border-fs-border px-1.5 py-0.2 text-[10px] text-fs-textMuted">
                       {snippet.category}
                     </span>
@@ -281,12 +281,12 @@ export const SnippetsPanel: React.FC<SnippetsPanelProps> = ({ session, className
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
           <div className="w-full max-w-md rounded-xl border border-fs-border bg-fs-surface p-5 shadow-2xl">
             <div className="flex items-center justify-between border-b border-fs-border pb-3 mb-4">
-              <span className="text-sm font-semibold text-white">
+              <span className="text-sm font-semibold text-fs-text">
                 {editingSnippetId ? '编辑快捷命令' : '新建快捷命令'}
               </span>
               <button
                 onClick={() => setIsAdding(false)}
-                className="p-1 rounded hover:bg-fs-hover text-fs-textMuted hover:text-white"
+                className="p-1 rounded hover:bg-fs-hover text-fs-textMuted hover:text-fs-text"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -301,7 +301,7 @@ export const SnippetsPanel: React.FC<SnippetsPanelProps> = ({ session, className
                   placeholder="例如: 查看端口占用、重启 Nginx"
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
-                  className="w-full rounded-lg border border-fs-border bg-fs-bg px-3 py-1.5 text-white focus:border-fs-primary focus:outline-hidden"
+                  className="w-full rounded-lg border border-fs-border bg-fs-bg px-3 py-1.5 text-fs-text focus:border-fs-primary focus:outline-hidden"
                 />
               </div>
 
@@ -318,7 +318,7 @@ export const SnippetsPanel: React.FC<SnippetsPanelProps> = ({ session, className
                         setNewCategory(e.target.value);
                       }
                     }}
-                    className="flex-1 rounded-lg border border-fs-border bg-fs-bg px-3 py-1.5 text-white focus:border-fs-primary focus:outline-hidden"
+                    className="flex-1 rounded-lg border border-fs-border bg-fs-bg px-3 py-1.5 text-fs-text focus:border-fs-primary focus:outline-hidden"
                   >
                     {categories.map((cat) => (
                       <option key={cat} value={cat}>
@@ -336,7 +336,7 @@ export const SnippetsPanel: React.FC<SnippetsPanelProps> = ({ session, className
                       placeholder="输入新分类名称"
                       value={newCategoryInput}
                       onChange={(e) => setNewCategoryInput(e.target.value)}
-                      className="flex-1 rounded-lg border border-fs-border bg-fs-bg px-3 py-1 text-white focus:border-fs-primary focus:outline-hidden"
+                      className="flex-1 rounded-lg border border-fs-border bg-fs-bg px-3 py-1 text-fs-text focus:border-fs-primary focus:outline-hidden"
                     />
                     <button
                       type="button"
@@ -365,7 +365,7 @@ export const SnippetsPanel: React.FC<SnippetsPanelProps> = ({ session, className
                   placeholder="输入要执行的 Linux 命令，例如: netstat -tlpn"
                   value={newCommand}
                   onChange={(e) => setNewCommand(e.target.value)}
-                  className="w-full font-mono rounded-lg border border-fs-border bg-fs-bg px-3 py-1.5 text-white focus:border-fs-primary focus:outline-hidden"
+                  className="w-full font-mono rounded-lg border border-fs-border bg-fs-bg px-3 py-1.5 text-fs-text focus:border-fs-primary focus:outline-hidden"
                 />
               </div>
 
