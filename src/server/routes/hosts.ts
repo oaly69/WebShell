@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { eq, and, asc } from 'drizzle-orm';
+import { eq, and, or, asc } from 'drizzle-orm';
 import { getDb } from '../db';
 import { hosts } from '../db/schema';
 import { verifyAuthToken, type AppVariables } from '../auth';
@@ -25,10 +25,23 @@ hostsRouter.use('*', async (c, next) => {
 hostsRouter.get('/', async (c) => {
   const user = c.get('user');
   const db = getDb(c.env.DB);
+
+  if (user.role === 'admin') {
+    try {
+      await db.update(hosts).set({ user_id: user.sub }).where(eq(hosts.user_id, 'default'));
+    } catch (e) {
+      console.error('Auto-claim default hosts error:', e);
+    }
+  }
+
   const list = await db
     .select()
     .from(hosts)
-    .where(eq(hosts.user_id, user.sub))
+    .where(
+      user.role === 'admin'
+        ? or(eq(hosts.user_id, user.sub), eq(hosts.user_id, 'default'))
+        : eq(hosts.user_id, user.sub)
+    )
     .orderBy(asc(hosts.sort_order), asc(hosts.name));
   return c.json(list as HostRecord[]);
 });
@@ -81,7 +94,11 @@ hostsRouter.put('/:id', async (c) => {
         ...body,
         updated_at: now,
       })
-      .where(and(eq(hosts.id, id), eq(hosts.user_id, user.sub)));
+      .where(
+        user.role === 'admin'
+          ? and(eq(hosts.id, id), or(eq(hosts.user_id, user.sub), eq(hosts.user_id, 'default')))
+          : and(eq(hosts.id, id), eq(hosts.user_id, user.sub))
+      );
 
     return c.json({ success: true });
   } catch (err: any) {
@@ -95,7 +112,13 @@ hostsRouter.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const db = getDb(c.env.DB);
   try {
-    await db.delete(hosts).where(and(eq(hosts.id, id), eq(hosts.user_id, user.sub)));
+    await db
+      .delete(hosts)
+      .where(
+        user.role === 'admin'
+          ? and(eq(hosts.id, id), or(eq(hosts.user_id, user.sub), eq(hosts.user_id, 'default')))
+          : and(eq(hosts.id, id), eq(hosts.user_id, user.sub))
+      );
     return c.json({ success: true });
   } catch (err: any) {
     console.error('DELETE /api/hosts error:', err);

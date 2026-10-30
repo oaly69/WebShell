@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { eq, and, asc } from 'drizzle-orm';
+import { eq, and, or, asc } from 'drizzle-orm';
 import { getDb } from '../db';
 import { snippets } from '../db/schema';
 import { verifyAuthToken, type AppVariables } from '../auth';
@@ -25,10 +25,23 @@ snippetsRouter.use('*', async (c, next) => {
 snippetsRouter.get('/', async (c) => {
   const user = c.get('user');
   const db = getDb(c.env.DB);
+
+  if (user.role === 'admin') {
+    try {
+      await db.update(snippets).set({ user_id: user.sub }).where(eq(snippets.user_id, 'default'));
+    } catch (e) {
+      console.error('Auto-claim default snippets error:', e);
+    }
+  }
+
   const list = await db
     .select()
     .from(snippets)
-    .where(eq(snippets.user_id, user.sub))
+    .where(
+      user.role === 'admin'
+        ? or(eq(snippets.user_id, user.sub), eq(snippets.user_id, 'default'))
+        : eq(snippets.user_id, user.sub)
+    )
     .orderBy(asc(snippets.category), asc(snippets.sort_order), asc(snippets.title));
   return c.json(list as SnippetRecord[]);
 });
@@ -61,7 +74,11 @@ snippetsRouter.put('/:id', async (c) => {
   await db
     .update(snippets)
     .set(body)
-    .where(and(eq(snippets.id, id), eq(snippets.user_id, user.sub)));
+    .where(
+      user.role === 'admin'
+        ? and(eq(snippets.id, id), or(eq(snippets.user_id, user.sub), eq(snippets.user_id, 'default')))
+        : and(eq(snippets.id, id), eq(snippets.user_id, user.sub))
+    );
 
   return c.json({ success: true });
 });
@@ -70,6 +87,12 @@ snippetsRouter.delete('/:id', async (c) => {
   const user = c.get('user');
   const id = c.req.param('id');
   const db = getDb(c.env.DB);
-  await db.delete(snippets).where(and(eq(snippets.id, id), eq(snippets.user_id, user.sub)));
+  await db
+    .delete(snippets)
+    .where(
+      user.role === 'admin'
+        ? and(eq(snippets.id, id), or(eq(snippets.user_id, user.sub), eq(snippets.user_id, 'default')))
+        : and(eq(snippets.id, id), eq(snippets.user_id, user.sub))
+    );
   return c.json({ success: true });
 });

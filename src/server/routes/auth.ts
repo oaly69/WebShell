@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { eq, sql } from 'drizzle-orm';
 import { getDb } from '../db';
-import { users } from '../db/schema';
+import { users, hosts, snippets, userSettings } from '../db/schema';
 import { hashLoginPassword, createAuthToken, verifyAuthToken } from '../auth';
 
 export const authRouter = new Hono<{ Bindings: Env }>();
@@ -59,6 +59,15 @@ authRouter.post('/init-admin', async (c) => {
     updated_at: now,
   });
 
+  // Auto-claim any legacy data with user_id = 'default' to this admin
+  try {
+    await db.update(hosts).set({ user_id: userId }).where(eq(hosts.user_id, 'default'));
+    await db.update(snippets).set({ user_id: userId }).where(eq(snippets.user_id, 'default'));
+    await db.update(userSettings).set({ user_id: userId }).where(eq(userSettings.user_id, 'default'));
+  } catch (e) {
+    console.error('Failed to claim legacy records on init-admin:', e);
+  }
+
   const token = await createAuthToken({
     id: userId,
     username: body.username.trim().toLowerCase(),
@@ -110,6 +119,17 @@ authRouter.post('/login', async (c) => {
     return c.json({ error: '用户不存在或密码错误' }, 401);
   }
 
+  // If logging in as admin, auto-claim any legacy data with user_id = 'default'
+  if (user.role === 'admin') {
+    try {
+      await db.update(hosts).set({ user_id: user.id }).where(eq(hosts.user_id, 'default'));
+      await db.update(snippets).set({ user_id: user.id }).where(eq(snippets.user_id, 'default'));
+      await db.update(userSettings).set({ user_id: user.id }).where(eq(userSettings.user_id, 'default'));
+    } catch (e) {
+      console.error('Failed to claim legacy records on login:', e);
+    }
+  }
+
   const token = await createAuthToken({
     id: user.id,
     username: user.username,
@@ -152,6 +172,18 @@ authRouter.get('/me', async (c) => {
   }
 
   const user = userRows[0];
+
+  // If user is admin, auto-claim any legacy data with user_id = 'default'
+  if (user.role === 'admin') {
+    try {
+      await db.update(hosts).set({ user_id: user.id }).where(eq(hosts.user_id, 'default'));
+      await db.update(snippets).set({ user_id: user.id }).where(eq(snippets.user_id, 'default'));
+      await db.update(userSettings).set({ user_id: user.id }).where(eq(userSettings.user_id, 'default'));
+    } catch (e) {
+      console.error('Failed to claim legacy records on /me:', e);
+    }
+  }
+
   return c.json({
     user: {
       id: user.id,

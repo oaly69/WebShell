@@ -82,7 +82,18 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
       onPtyDataCallbacks: callbacks,
     };
 
-    ws.onopen = () => {
+    ws.onopen = async () => {
+      let creds = host.credentials;
+      const { masterKey } = useAuthStore.getState();
+      if ((!creds || (!creds.password && !creds.privateKey)) && masterKey && host.encrypted_cred) {
+        try {
+          const { decryptCredentials } = await import('../crypto/vault');
+          creds = await decryptCredentials(masterKey, host.encrypted_cred);
+        } catch (e) {
+          console.error('Failed to decrypt host credentials on connect:', e);
+        }
+      }
+
       // Send connect handshake
       const handshake = encodeControlMsg({
         type: 'connect',
@@ -91,9 +102,9 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         port: host.port,
         username: host.username,
         authType: host.auth_type,
-        password: host.credentials.password,
-        privateKey: host.credentials.privateKey,
-        passphrase: host.credentials.passphrase,
+        password: creds?.password,
+        privateKey: creds?.privateKey,
+        passphrase: creds?.passphrase,
         cols: 80,
         rows: 24,
       });

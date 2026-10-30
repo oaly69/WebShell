@@ -16,7 +16,7 @@ import { Activity, FolderOpen, Terminal } from 'lucide-react';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 export const App: React.FC = () => {
-  const { checkAuthStatus, token } = useAuthStore();
+  const { checkAuthStatus, token, masterKey } = useAuthStore();
   const { fetchHosts, fetchSnippets } = useSyncStore();
   const { sessions, activeSessionId, activeTab, setActiveTab } = useSessionStore();
 
@@ -50,7 +50,7 @@ export const App: React.FC = () => {
       fetchHosts();
       fetchSnippets();
     }
-  }, [token]);
+  }, [token, masterKey]);
 
   const handleInstallPwa = async () => {
     if (!deferredPrompt) return;

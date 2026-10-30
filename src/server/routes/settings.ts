@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, or } from 'drizzle-orm';
 import { getDb } from '../db';
 import { userSettings } from '../db/schema';
 import { verifyAuthToken, type AppVariables } from '../auth';
@@ -24,7 +24,23 @@ settingsRouter.use('*', async (c, next) => {
 settingsRouter.get('/', async (c) => {
   const user = c.get('user');
   const db = getDb(c.env.DB);
-  const rows = await db.select().from(userSettings).where(eq(userSettings.user_id, user.sub));
+
+  if (user.role === 'admin') {
+    try {
+      await db.update(userSettings).set({ user_id: user.sub }).where(eq(userSettings.user_id, 'default'));
+    } catch (e) {
+      console.error('Auto-claim default settings error:', e);
+    }
+  }
+
+  const rows = await db
+    .select()
+    .from(userSettings)
+    .where(
+      user.role === 'admin'
+        ? or(eq(userSettings.user_id, user.sub), eq(userSettings.user_id, 'default'))
+        : eq(userSettings.user_id, user.sub)
+    );
   const settings: Record<string, string> = {};
   for (const row of rows) {
     settings[row.key] = row.value;

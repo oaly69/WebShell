@@ -30,7 +30,39 @@ interface AuthStoreState {
 }
 
 const STORAGE_KEY_TOKEN = 'fs_token';
+const STORAGE_KEY_VAULT = 'fs_vault_key';
 const SESSION_KEY_VAULT = 'fs_vault_key';
+
+const saveVaultKey = (exported: string) => {
+  try {
+    localStorage.setItem(STORAGE_KEY_VAULT, exported);
+    sessionStorage.setItem(SESSION_KEY_VAULT, exported);
+  } catch {}
+};
+
+const getCachedVaultKey = (): string | null => {
+  try {
+    return localStorage.getItem(STORAGE_KEY_VAULT) || sessionStorage.getItem(SESSION_KEY_VAULT);
+  } catch {
+    return null;
+  }
+};
+
+const clearAuthStorage = () => {
+  try {
+    localStorage.removeItem(STORAGE_KEY_TOKEN);
+    localStorage.removeItem(STORAGE_KEY_VAULT);
+    sessionStorage.removeItem(SESSION_KEY_VAULT);
+  } catch {}
+};
+
+const triggerSyncFetch = async () => {
+  try {
+    const { useSyncStore } = await import('./useSyncStore');
+    useSyncStore.getState().fetchHosts();
+    useSyncStore.getState().fetchSnippets();
+  } catch {}
+};
 
 export const useAuthStore = create<AuthStoreState>((set, get) => ({
   token: localStorage.getItem(STORAGE_KEY_TOKEN),
@@ -62,12 +94,12 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
         if (meRes.ok) {
           const meData = (await meRes.json()) as any;
           let restoredMasterKey: CryptoKey | null = null;
-          const cachedSessionKey = sessionStorage.getItem(SESSION_KEY_VAULT);
-          if (cachedSessionKey) {
+          const cachedKey = getCachedVaultKey();
+          if (cachedKey) {
             try {
-              restoredMasterKey = await importMasterKey(cachedSessionKey);
+              restoredMasterKey = await importMasterKey(cachedKey);
             } catch {
-              sessionStorage.removeItem(SESSION_KEY_VAULT);
+              clearAuthStorage();
             }
           }
 
@@ -83,10 +115,12 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
               verifier_cipher: meData.verifier_cipher,
             },
           });
+
+          // Proactively fetch hosts and snippets
+          triggerSyncFetch();
           return;
         } else {
-          localStorage.removeItem(STORAGE_KEY_TOKEN);
-          sessionStorage.removeItem(SESSION_KEY_VAULT);
+          clearAuthStorage();
           set({ token: null, user: null, masterKey: null, isChecking: false, isVaultLocked: false });
         }
       } else {
@@ -121,7 +155,7 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
 
     try {
       const exported = await exportMasterKey(masterKey);
-      sessionStorage.setItem(SESSION_KEY_VAULT, exported);
+      saveVaultKey(exported);
     } catch {}
 
     localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
@@ -137,6 +171,8 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
         verifier_cipher: verifierCipher,
       },
     });
+
+    triggerSyncFetch();
   },
 
   login: async (username, masterPassword) => {
@@ -187,7 +223,7 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
 
     try {
       const exported = await exportMasterKey(masterKey);
-      sessionStorage.setItem(SESSION_KEY_VAULT, exported);
+      saveVaultKey(exported);
     } catch {}
 
     localStorage.setItem(STORAGE_KEY_TOKEN, data.token);
@@ -202,6 +238,8 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
         verifier_cipher: finalVerifier,
       },
     });
+
+    triggerSyncFetch();
   },
 
   unlockVaultWithPassword: async (password: string) => {
@@ -240,7 +278,7 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
 
     try {
       const exported = await exportMasterKey(masterKey);
-      sessionStorage.setItem(SESSION_KEY_VAULT, exported);
+      saveVaultKey(exported);
     } catch {}
 
     set({
@@ -248,11 +286,12 @@ export const useAuthStore = create<AuthStoreState>((set, get) => ({
       isVaultLocked: false,
       vaultMeta: nextMeta,
     });
+
+    triggerSyncFetch();
   },
 
   logout: () => {
-    localStorage.removeItem(STORAGE_KEY_TOKEN);
-    sessionStorage.removeItem(SESSION_KEY_VAULT);
+    clearAuthStorage();
     set({
       token: null,
       user: null,

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useSyncStore } from '../../store/useSyncStore';
 import { useSessionStore } from '../../store/useSessionStore';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -28,6 +28,7 @@ interface HostManagerModalProps {
 export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onClose }) => {
   const {
     hosts,
+    fetchHosts,
     saveHost,
     deleteHost,
     getHostGroups,
@@ -49,6 +50,12 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
   const [isGroupManagerOpen, setIsGroupManagerOpen] = useState(false);
   const [isCreatingNewGroup, setIsCreatingNewGroup] = useState(false);
   const [newGroupInput, setNewGroupInput] = useState('');
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchHosts();
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

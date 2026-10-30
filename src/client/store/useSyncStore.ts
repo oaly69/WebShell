@@ -56,7 +56,7 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
 
   fetchHosts: async () => {
     const { token, masterKey } = useAuthStore.getState();
-    if (!token || !masterKey) return;
+    if (!token) return;
 
     set({ isLoading: true });
     try {
@@ -68,13 +68,21 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
       const decrypted: DecryptedHost[] = [];
 
       for (const item of list) {
-        try {
-          const creds = await decryptCredentials(masterKey, item.encrypted_cred);
-          decrypted.push({
-            ...item,
-            credentials: creds,
-          });
-        } catch {
+        if (masterKey) {
+          try {
+            const creds = await decryptCredentials(masterKey, item.encrypted_cred);
+            decrypted.push({
+              ...item,
+              credentials: creds,
+            });
+          } catch {
+            decrypted.push({
+              ...item,
+              credentials: {},
+            });
+          }
+        } else {
+          // If vault key is not ready or locked, preserve host metadata with empty creds
           decrypted.push({
             ...item,
             credentials: {},

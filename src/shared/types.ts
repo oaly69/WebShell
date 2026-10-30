@@ -47,6 +47,7 @@ export interface HostRecord {
 // Decrypted host for in-memory use in UI
 export interface DecryptedHost extends Omit<HostRecord, 'encrypted_cred'> {
   credentials: HostCredentials;
+  encrypted_cred?: string;
 }
 
 export interface SnippetRecord {
