@@ -126,14 +126,22 @@ export class SshSessionDO extends DurableObject {
         });
 
         this.sshConnectPromise = this.ssh.connect();
-        await this.sshConnectPromise;
-        this.sendControl({ type: 'status', state: 'connected' });
+        try {
+          await this.sshConnectPromise;
+          this.sendControl({ type: 'status', state: 'connected' });
 
-        // If monitor_toggle arrived while connecting, start monitor channel now
-        if (this.isMonitorEnabled && !this.isMonitorRunning && this.ssh) {
-          this.isMonitorRunning = true;
-          this.ssh.openChannel('exec', MONITOR_SHELL_COMMAND).catch(() => {
-            this.isMonitorRunning = false;
+          // If monitor_toggle arrived while connecting, start monitor channel now
+          if (this.isMonitorEnabled && !this.isMonitorRunning && this.ssh) {
+            this.isMonitorRunning = true;
+            this.ssh.openChannel('exec', MONITOR_SHELL_COMMAND).catch(() => {
+              this.isMonitorRunning = false;
+            });
+          }
+        } catch (err: any) {
+          this.sendControl({
+            type: 'status',
+            state: 'disconnected',
+            message: err?.message || '连接失败',
           });
         }
         break;

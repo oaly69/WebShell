@@ -103,9 +103,34 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({ isOpen, onCl
       return;
     }
 
+    let cleanHost = editingHost.hostname.trim();
+    let cleanPort = editingHost.port || 22;
+
+    const bracketPortMatch = cleanHost.match(/^\[([a-fA-F0-9:]+)\]:(\d+)$/);
+    if (bracketPortMatch) {
+      cleanHost = bracketPortMatch[1];
+      cleanPort = parseInt(bracketPortMatch[2], 10) || cleanPort;
+    } else {
+      const bracketMatch = cleanHost.match(/^\[([a-fA-F0-9:]+)\]$/);
+      if (bracketMatch) {
+        cleanHost = bracketMatch[1];
+      } else {
+        const ipv4PortMatch = cleanHost.match(/^(\d{1,3}(?:\.\d{1,3}){3}):(\d+)$/);
+        if (ipv4PortMatch) {
+          cleanHost = ipv4PortMatch[1];
+          cleanPort = parseInt(ipv4PortMatch[2], 10) || cleanPort;
+        }
+      }
+    }
+    cleanHost = cleanHost.replace(/^\[|\]$/g, '').trim();
+
     setIsSaving(true);
     try {
-      await saveHost(editingHost);
+      await saveHost({
+        ...editingHost,
+        hostname: cleanHost,
+        port: cleanPort,
+      });
       setIsFormOpen(false);
       setEditingHost(null);
     } catch (err: any) {

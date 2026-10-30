@@ -32,6 +32,66 @@ export interface SshChannel {
   remoteMaxPacket: number;
 }
 
+export function normalizeHostAddress(rawHost: string, defaultPort: number = 22): { hostname: string; port: number } {
+  let host = (rawHost || '').trim();
+  let port = defaultPort;
+
+  // Handle [ipv6]:port, e.g. [2001:db8::1]:2222
+  const bracketPortMatch = host.match(/^\[([a-fA-F0-9:]+)\]:(\d+)$/);
+  if (bracketPortMatch) {
+    host = bracketPortMatch[1];
+    port = parseInt(bracketPortMatch[2], 10) || defaultPort;
+  } else {
+    // Handle [ipv6] without port, e.g. [2001:db8::1]
+    const bracketMatch = host.match(/^\[([a-fA-F0-9:]+)\]$/);
+    if (bracketMatch) {
+      host = bracketMatch[1];
+    } else {
+      // Handle ipv4:port, e.g. 1.2.3.4:2222
+      const ipv4PortMatch = host.match(/^(\d{1,3}(?:\.\d{1,3}){3}):(\d+)$/);
+      if (ipv4PortMatch) {
+        host = ipv4PortMatch[1];
+        port = parseInt(ipv4PortMatch[2], 10) || defaultPort;
+      }
+    }
+  }
+
+  // Ensure clean hostname without square brackets
+  host = host.replace(/^\[|\]$/g, '').trim();
+
+  return { hostname: host, port };
+}
+
+export function formatSocketError(msg: string, host?: string, port?: number): string {
+  const isIpv6 = host && (host.includes(':') || host.includes('::'));
+  const targetStr = host ? `${host}:${port || 22}` : '';
+
+  if (
+    msg.includes('Stream was cancelled') ||
+    msg.includes('cancelled') ||
+    msg.includes('canceled')
+  ) {
+    if (isIpv6) {
+      return `连接被远程主机中断 (Stream was cancelled)。\n目标主机为 IPv6 (${targetStr})，请检查：\n1. 目标服务器 SSH 服务是否在 IPv6 监听（检查 /etc/ssh/sshd_config 的 ListenAddress :: 或 AddressFamily any）；\n2. 云服务商安全组及系统防火墙 (ufw/ip6tables) 是否放行了 IPv6 的 ${port || 22} 端口；\n3. 目标机器 IPv6 网络是否通畅且允许外部公网访问。`;
+    }
+    return `远程服务器重置或中断了连接 (Stream was cancelled)。请检查目标服务器 SSH 服务是否正常运行及防火墙设置。`;
+  }
+
+  if (msg.includes('Connection refused') || msg.includes('refused')) {
+    return `目标服务器拒绝连接 (${targetStr})。请检查 SSH 服务是否正常运行并监听该端口。`;
+  }
+
+  if (
+    msg.includes('Network unreachable') ||
+    msg.includes('unreachable') ||
+    msg.includes('No route to host')
+  ) {
+    return `目标网络不可达 (${targetStr})。请确认目标 IPv6/IPv4 路由及地址可达性。`;
+  }
+
+  return msg || '连接异常关闭';
+}
+
 export class SshClient {
   private socket: any = null;
   private reader: any = null;
@@ -78,11 +138,48 @@ export class SshClient {
   }
 
   async connect(): Promise<void> {
+    const { hostname: cleanHost, port: cleanPort } = normalizeHostAddress(
+      this.options.hostname,
+      this.options.port
+    );
+
     try {
       this.socket = connect({
-        hostname: this.options.hostname,
-        port: this.options.port,
+        hostname: cleanHost,
+        port: cleanPort,
       });
+
+      // Monitor socket.closed in background
+      if (this.socket.closed) {
+        this.socket.closed.catch((err: any) => {
+          if (!this.isClosed) {
+            const errMsg = err?.message || '';
+            this.close(formatSocketError(errMsg, cleanHost, cleanPort));
+          }
+        });
+      }
+
+      // Wait for socket to establish connection or fail with descriptive error
+      if (this.socket.opened) {
+        let openTimeoutId: any;
+        const openTimeoutPromise = new Promise<never>((_, reject) => {
+          openTimeoutId = setTimeout(() => {
+            reject(
+              new Error(
+                `TCP 连接超时 (10s)。无法连接到 ${cleanHost}:${cleanPort}，请检查目标服务器是否开机、防火墙/安全组是否放行。`
+              )
+            );
+          }, 10000);
+        });
+
+        try {
+          await Promise.race([this.socket.opened, openTimeoutPromise]).finally(() => {
+            clearTimeout(openTimeoutId);
+          });
+        } catch (openErr: any) {
+          throw new Error(formatSocketError(openErr?.message || '无法建立 TCP 连接', cleanHost, cleanPort));
+        }
+      }
 
       this.writer = this.socket.writable.getWriter();
       this.reader = this.socket.readable.getReader();
@@ -115,7 +212,7 @@ export class SshClient {
         clearTimeout(timeoutId);
       }
     } catch (err: any) {
-      this.close(`Connection failed: ${err.message}`);
+      this.close(formatSocketError(err.message || '', cleanHost, cleanPort));
       throw err;
     }
   }
@@ -176,11 +273,8 @@ export class SshClient {
       }
     } catch (err: any) {
       if (!this.isClosed) {
-        const msg = err.message || '';
-        const friendly = msg.includes('Stream was cancelled')
-          ? '远程服务器中断或重置了连接'
-          : `连接异常: ${msg}`;
-        this.close(friendly);
+        const msg = err?.message || '';
+        this.close(formatSocketError(msg, this.options.hostname, this.options.port));
       }
     } finally {
       if (!this.isClosed) {

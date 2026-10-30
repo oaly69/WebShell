@@ -1,5 +1,5 @@
 // Service Worker for FinalShell Web PWA (Network-First Strategy)
-const CACHE_NAME = 'finalshell-v4';
+const CACHE_NAME = 'finalshell-v5';
 const STATIC_ASSETS = [
   '/manifest.json',
   '/icon.svg',

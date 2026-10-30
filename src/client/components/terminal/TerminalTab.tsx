@@ -147,14 +147,19 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
               <span>正在连接 {session.host.hostname}:{session.host.port}...</span>
             </div>
           ) : (
-            <div className="flex flex-col items-center space-y-3 text-sm text-fs-danger">
-              <div className="flex items-center space-x-2">
-                <AlertCircle className="w-5 h-5 shrink-0" />
-                <span>连接已断开: {session.errorMessage || '会话结束'}</span>
+            <div className="flex flex-col items-center max-w-lg space-y-3.5 text-sm bg-fs-surface/95 border border-fs-border/80 p-5 rounded-2xl shadow-2xl">
+              <div className="flex items-start space-x-3 text-left">
+                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-fs-danger" />
+                <div className="flex flex-col space-y-1">
+                  <span className="font-semibold text-white">连接未建立或已中断</span>
+                  <p className="text-xs text-fs-text whitespace-pre-wrap leading-relaxed">
+                    {session.errorMessage || '会话已结束'}
+                  </p>
+                </div>
               </div>
               <button
                 onClick={handleReconnect}
-                className="flex items-center space-x-1.5 rounded bg-fs-primary hover:bg-fs-primaryHover px-3.5 py-1.5 text-xs text-white transition-colors"
+                className="flex items-center space-x-1.5 rounded-lg bg-fs-primary hover:bg-fs-primaryHover px-4 py-2 text-xs font-medium text-white transition-colors shadow"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 <span>重新连接</span>

@@ -104,13 +104,34 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
 
     const encrypted_cred = await encryptCredentials(masterKey, hostData.credentials);
 
+    let cleanHostname = hostData.hostname.trim();
+    let cleanPort = hostData.port || 22;
+
+    const bracketPortMatch = cleanHostname.match(/^\[([a-fA-F0-9:]+)\]:(\d+)$/);
+    if (bracketPortMatch) {
+      cleanHostname = bracketPortMatch[1];
+      cleanPort = parseInt(bracketPortMatch[2], 10) || cleanPort;
+    } else {
+      const bracketMatch = cleanHostname.match(/^\[([a-fA-F0-9:]+)\]$/);
+      if (bracketMatch) {
+        cleanHostname = bracketMatch[1];
+      } else {
+        const ipv4PortMatch = cleanHostname.match(/^(\d{1,3}(?:\.\d{1,3}){3}):(\d+)$/);
+        if (ipv4PortMatch) {
+          cleanHostname = ipv4PortMatch[1];
+          cleanPort = parseInt(ipv4PortMatch[2], 10) || cleanPort;
+        }
+      }
+    }
+    cleanHostname = cleanHostname.replace(/^\[|\]$/g, '').trim();
+
     const isUpdate = !!hostData.id;
     const payload = {
       ...(isUpdate ? { id: hostData.id } : {}),
       name: hostData.name.trim(),
       group_name: (hostData.group_name || '默认分组').trim(),
-      hostname: hostData.hostname.trim(),
-      port: hostData.port || 22,
+      hostname: cleanHostname,
+      port: cleanPort,
       username: hostData.username.trim(),
       auth_type: hostData.auth_type,
       encrypted_cred,
