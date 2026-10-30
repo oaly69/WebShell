@@ -20,9 +20,10 @@ import { encodeControlMsg } from '@shared/ws-protocol';
 
 interface SftpPanelProps {
   session: TerminalSession;
+  className?: string;
 }
 
-export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
+export const SftpPanel: React.FC<SftpPanelProps> = ({ session, className = '' }) => {
   const { sftpNavigate, sftpRefresh } = useSessionStore();
   const [editingFile, setEditingFile] = useState<{ path: string; content: string } | null>(null);
   const [editorLoading, setEditorLoading] = useState(false);
@@ -218,7 +219,7 @@ export const SftpPanel: React.FC<SftpPanelProps> = ({ session }) => {
   };
 
   return (
-    <div className="flex h-56 w-full flex-col border-t border-fs-border bg-fs-surface select-none">
+    <div className={`flex h-full w-full flex-col bg-fs-surface select-none overflow-hidden ${className}`}>
       {/* 1. Header Toolbar & Breadcrumb */}
       <div className="flex h-8 items-center justify-between border-b border-fs-border px-3 bg-fs-bg/40 text-xs">
         <div className="flex items-center space-x-1 flex-1 mr-4 overflow-hidden">

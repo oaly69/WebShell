@@ -23,6 +23,7 @@ export interface TerminalSession {
   sftpError?: string;
   ws: WebSocket | null;
   onPtyDataCallbacks: Set<(data: Uint8Array) => void>;
+  ptyLogs: Uint8Array[];
 }
 
 interface SessionStoreState {
@@ -80,6 +81,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
       sftpLoading: false,
       ws,
       onPtyDataCallbacks: callbacks,
+      ptyLogs: [],
     };
 
     ws.onopen = async () => {
@@ -126,6 +128,10 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         if (!current) return;
 
         if (type === FrameType.PTY_DATA) {
+          current.ptyLogs.push(rawPayload);
+          if (current.ptyLogs.length > 3000) {
+            current.ptyLogs.splice(0, current.ptyLogs.length - 2000);
+          }
           for (const cb of current.onPtyDataCallbacks) {
             cb(rawPayload);
           }

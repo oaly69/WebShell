@@ -56,6 +56,15 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
 
     term.open(containerRef.current);
 
+    // Replay any existing pty logs for this session so history is never lost
+    if (session.ptyLogs && session.ptyLogs.length > 0) {
+      for (const chunk of session.ptyLogs) {
+        try {
+          term.write(chunk);
+        } catch {}
+      }
+    }
+
     // Fit safely after layout paint
     requestAnimationFrame(() => {
       try {
@@ -73,8 +82,8 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
       }
     });
 
-    // Handle Resize
-    const handleResize = () => {
+    // Handle Resize / Refit
+    const handleRefit = () => {
       if (!fitAddonRef.current || !termRef.current) return;
       try {
         fitAddonRef.current.fit();
@@ -87,7 +96,8 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
       } catch {}
     };
 
-    window.addEventListener('resize', handleResize);
+    window.addEventListener('resize', handleRefit);
+    window.addEventListener('terminal-refit', handleRefit);
 
     // Register incoming PTY callback
     const onPtyData = (data: Uint8Array) => {
@@ -100,7 +110,8 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
     session.onPtyDataCallbacks.add(onPtyData);
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('resize', handleRefit);
+      window.removeEventListener('terminal-refit', handleRefit);
       onDataDisposable.dispose();
       session.onPtyDataCallbacks.delete(onPtyData);
       try {

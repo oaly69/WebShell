@@ -4,13 +4,14 @@ import { Cpu, HardDrive, Wifi, Activity, Layers } from 'lucide-react';
 
 interface MonitorPanelProps {
   metrics: SystemMetrics | null;
+  className?: string;
 }
 
-export const MonitorPanel: React.FC<MonitorPanelProps> = ({ metrics }) => {
+export const MonitorPanel: React.FC<MonitorPanelProps> = ({ metrics, className = '' }) => {
   if (!metrics) {
     return (
-      <div className="flex h-full w-full items-center justify-center text-xs text-fs-textMuted bg-fs-surface border-r border-fs-border">
-        <span>等待服务器实时数据流...</span>
+      <div className={`flex h-full w-full items-center justify-center text-xs text-fs-textMuted bg-fs-surface p-4 text-center ${className}`}>
+        <span>等待服务器实时监控数据流...</span>
       </div>
     );
   }
@@ -29,7 +30,7 @@ export const MonitorPanel: React.FC<MonitorPanelProps> = ({ metrics }) => {
   };
 
   return (
-    <div className="flex h-full w-64 flex-col overflow-y-auto border-r border-fs-border bg-fs-surface p-2.5 space-y-3.5 text-xs select-none">
+    <div className={`flex h-full w-full flex-col overflow-y-auto bg-fs-surface p-2.5 space-y-3.5 text-xs select-none ${className}`}>
       {/* 1. CPU Section */}
       <div className="rounded-lg bg-fs-bg/60 p-2.5 border border-fs-border">
         <div className="flex items-center justify-between mb-1.5">
