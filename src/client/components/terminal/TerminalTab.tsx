@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
@@ -96,6 +96,40 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
   const fitAddonRef = useRef<FitAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const cmdInputRef = useRef<HTMLInputElement>(null);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+
+  const focusTerminal = useCallback(() => {
+    if (cmdInputRef.current === document.activeElement) {
+      cmdInputRef.current?.blur();
+    }
+    termRef.current?.focus();
+  }, []);
+
+  // FinalShell style: Double-Ctrl toggles focus between terminal log area and command input bar
+  const lastCtrlPressRef = useRef<number>(0);
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Control') {
+        const now = Date.now();
+        if (now - lastCtrlPressRef.current < 400) {
+          e.preventDefault();
+          if (document.activeElement === cmdInputRef.current) {
+            focusTerminal();
+          } else {
+            cmdInputRef.current?.focus();
+            cmdInputRef.current?.select();
+          }
+          lastCtrlPressRef.current = 0;
+        } else {
+          lastCtrlPressRef.current = now;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [focusTerminal]);
 
   // Command Bar & Action States
   const [cmdInput, setCmdInput] = useState('');
@@ -155,7 +189,7 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
       }
     }
 
-    // Fit safely after layout paint
+    // Fit safely after layout paint and focus terminal
     requestAnimationFrame(() => {
       try {
         const el = containerRef.current;
@@ -163,9 +197,11 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
         fitAddon.fit();
         const cols = term.cols;
         const rows = term.rows;
-        if (cols >= 20 && rows >= 4 && session.ws && session.ws.readyState === WebSocket.OPEN) {
-          session.ws.send(encodeControlMsg({ type: 'resize', cols, rows }));
+        const ws = useSessionStore.getState().sessions.find((s) => s.sessionId === session.sessionId)?.ws || sessionRef.current.ws;
+        if (cols >= 20 && rows >= 4 && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(encodeControlMsg({ type: 'resize', cols, rows }));
         }
+        term.focus();
       } catch {}
     });
 
@@ -186,8 +222,9 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
         fitAddonRef.current.fit();
         const cols = termRef.current.cols;
         const rows = termRef.current.rows;
-        if (cols >= 20 && rows >= 4 && session.ws && session.ws.readyState === WebSocket.OPEN) {
-          session.ws.send(encodeControlMsg({ type: 'resize', cols, rows }));
+        const ws = useSessionStore.getState().sessions.find((s) => s.sessionId === session.sessionId)?.ws || sessionRef.current.ws;
+        if (cols >= 20 && rows >= 4 && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(encodeControlMsg({ type: 'resize', cols, rows }));
         }
       } catch {}
     };
@@ -205,12 +242,25 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
     };
     session.onPtyDataCallbacks.add(onPtyData);
 
-    // User input directly in terminal canvas
+    // User input directly in terminal canvas (always uses live session WebSocket)
     const onDataDisposable = term.onData((data) => {
-      if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+      const { sessions, isBroadcastMode } = useSessionStore.getState();
+      const currentSession = sessions.find((s) => s.sessionId === session.sessionId) || sessionRef.current;
+      const targetWs = currentSession?.ws;
+
+      if (targetWs && targetWs.readyState === WebSocket.OPEN) {
         const payload = new TextEncoder().encode(data);
         const frame = encodePtyData(payload);
-        session.ws.send(frame);
+
+        if (isBroadcastMode) {
+          for (const s of sessions) {
+            if (s.ws && s.ws.readyState === WebSocket.OPEN) {
+              s.ws.send(frame);
+            }
+          }
+        } else {
+          targetWs.send(frame);
+        }
       }
     });
 
@@ -280,10 +330,23 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
     const text = (textToSend !== undefined ? textToSend : cmdInput).trim();
     if (!text) return;
 
-    if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+    const { sessions, isBroadcastMode } = useSessionStore.getState();
+    const currentSession = sessions.find((s) => s.sessionId === session.sessionId) || sessionRef.current;
+    const targetWs = currentSession?.ws;
+
+    if (targetWs && targetWs.readyState === WebSocket.OPEN) {
       const full = autoEnter ? `${text}\r` : text;
       const frame = encodePtyData(new TextEncoder().encode(full));
-      session.ws.send(frame);
+
+      if (isBroadcastMode) {
+        for (const s of sessions) {
+          if (s.ws && s.ws.readyState === WebSocket.OPEN) {
+            s.ws.send(frame);
+          }
+        }
+      } else {
+        targetWs.send(frame);
+      }
     }
 
     // Save to history
@@ -320,7 +383,7 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
         setCmdInput('');
       }
     } else if (e.key === 'Escape') {
-      cmdInputRef.current?.blur();
+      focusTerminal();
       setIsHistoryOpen(false);
       setIsOptionsOpen(false);
       setIsSettingsOpen(false);
@@ -342,9 +405,24 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
   const handlePaste = async () => {
     try {
       const text = await navigator.clipboard.readText();
-      if (text && session.ws && session.ws.readyState === WebSocket.OPEN) {
-        session.ws.send(encodePtyData(new TextEncoder().encode(text)));
+      if (!text) return;
+      const { sessions, isBroadcastMode } = useSessionStore.getState();
+      const currentSession = sessions.find((s) => s.sessionId === session.sessionId) || sessionRef.current;
+      const targetWs = currentSession?.ws;
+
+      if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+        const frame = encodePtyData(new TextEncoder().encode(text));
+        if (isBroadcastMode) {
+          for (const s of sessions) {
+            if (s.ws && s.ws.readyState === WebSocket.OPEN) {
+              s.ws.send(frame);
+            }
+          }
+        } else {
+          targetWs.send(frame);
+        }
       }
+      focusTerminal();
     } catch {}
   };
 
@@ -447,8 +525,15 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({ session }) => {
       )}
 
       {/* 2. Terminal Canvas Container */}
-      <div className="relative flex-1 h-full w-full overflow-hidden">
-        <div ref={containerRef} className="h-full w-full p-2" />
+      <div
+        className="relative flex-1 min-h-0 w-full overflow-hidden cursor-text select-text"
+        onClick={focusTerminal}
+      >
+        <div
+          ref={containerRef}
+          className="h-full w-full p-2 select-text"
+          onClick={focusTerminal}
+        />
 
         {/* Disconnected / Error Overlay */}
         {session.status !== 'connected' && (
