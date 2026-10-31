@@ -1,33 +1,34 @@
 import type { SystemMetrics } from '@shared/types';
 
 export const MONITOR_SHELL_COMMAND = `
+TAG="FS"
 while true; do
-  echo "---FS_METRIC_START---"
+  echo "---"\${TAG}"_METRIC_START---"
   date +%s
-  echo "===FS_LOAD==="
+  echo "==="\${TAG}"_LOAD==="
   (cat /proc/loadavg 2>/dev/null || uptime 2>/dev/null)
-  echo "===FS_MEM==="
+  echo "==="\${TAG}"_MEM==="
   (cat /proc/stat 2>/dev/null | grep '^cpu ')
   (cat /proc/meminfo 2>/dev/null | grep -E '^(MemTotal|MemFree|MemAvailable|Buffers|Cached|SwapTotal|SwapFree):')
-  [ -f /sys/fs/cgroup/memory.current ] && printf "CGROUP_MEM_CURRENT=%s\n" "$(cat /sys/fs/cgroup/memory.current 2>/dev/null)"
-  [ -f /sys/fs/cgroup/memory.max ] && printf "CGROUP_MEM_MAX=%s\n" "$(cat /sys/fs/cgroup/memory.max 2>/dev/null)"
-  [ -f /sys/fs/cgroup/memory/memory.usage_in_bytes ] && printf "CGROUP_MEM_CURRENT=%s\n" "$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null)"
-  [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ] && printf "CGROUP_MEM_MAX=%s\n" "$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null)"
+  [ -f /sys/fs/cgroup/memory.current ] && printf "CGROUP_MEM_CURRENT=%s\\n" "$(cat /sys/fs/cgroup/memory.current 2>/dev/null)"
+  [ -f /sys/fs/cgroup/memory.max ] && printf "CGROUP_MEM_MAX=%s\\n" "$(cat /sys/fs/cgroup/memory.max 2>/dev/null)"
+  [ -f /sys/fs/cgroup/memory/memory.usage_in_bytes ] && printf "CGROUP_MEM_CURRENT=%s\\n" "$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null)"
+  [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ] && printf "CGROUP_MEM_MAX=%s\\n" "$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null)"
   (free -b 2>/dev/null || free -k 2>/dev/null || free -m 2>/dev/null || free 2>/dev/null)
-  echo "===FS_NET==="
-  (cat /proc/net/dev 2>/dev/null || (for d in /sys/class/net/*; do [ -d "$d" ] && printf "%s: %s 0 0 0 0 0 0 0 %s\n" "$(basename "$d")" "$(cat "$d/statistics/rx_bytes" 2>/dev/null || echo 0)" "$(cat "$d/statistics/tx_bytes" 2>/dev/null || echo 0)"; done 2>/dev/null))
-  echo "===FS_DF==="
+  echo "==="\${TAG}"_NET==="
+  (cat /proc/net/dev 2>/dev/null || (for d in /sys/class/net/*; do [ -d "$d" ] && printf "%s: %s 0 0 0 0 0 0 0 %s\\n" "$(basename "$d")" "$(cat "$d/statistics/rx_bytes" 2>/dev/null || echo 0)" "$(cat "$d/statistics/tx_bytes" 2>/dev/null || echo 0)"; done 2>/dev/null))
+  echo "==="\${TAG}"_DF==="
   (df -kP 2>/dev/null || df -k 2>/dev/null || df 2>/dev/null); (df -kP / 2>/dev/null || df -k / 2>/dev/null || df / 2>/dev/null)
-  echo "===FS_PS==="
-  (ps -eo pid,user,pcpu,pmem,comm --sort=-pcpu 2>/dev/null || ps aux 2>/dev/null || top -b -n 1 2>/dev/null || ps -ef 2>/dev/null || ps 2>/dev/null) | head -n 25
-  echo "===FS_SYS==="
-  printf "PRETTY_NAME=%s\n" "$(grep -m 1 '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d '\"' || grep -m 1 '^NAME=' /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d '\"' || cat /etc/redhat-release 2>/dev/null || cat /etc/alpine-release 2>/dev/null || head -n 1 /etc/issue 2>/dev/null | sed 's/\\\\.*//' || echo 'Linux')"
-  printf "UNAME=%s\n" "$(uname -s -r -m 2>/dev/null)"
-  printf "HOSTNAME=%s\n" "$(cat /etc/hostname 2>/dev/null || uname -n 2>/dev/null || hostname 2>/dev/null)"
-  printf "UPTIME=%s\n" "$(cat /proc/uptime 2>/dev/null || uptime 2>/dev/null)"
-  printf "CPUMODEL=%s\n" "$(grep -E '^(model name|Hardware|Processor)' /proc/cpuinfo 2>/dev/null | head -n 1 | sed 's/.*:[ \t]*//')"
-  printf "CPUCORES=%s\n" "$(grep -c '^processor' /proc/cpuinfo 2>/dev/null || nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
-  echo "---FS_METRIC_END---"
+  echo "==="\${TAG}"_PS==="
+  (ps -eo pid,user,pcpu,pmem,comm --sort=-pcpu 2>/dev/null || ps aux 2>/dev/null || top -b -n 1 2>/dev/null || ps -ef 2>/dev/null || ps 2>/dev/null) | grep -v 'FS_' | grep -v 'METRIC_' | head -n 25
+  echo "==="\${TAG}"_SYS==="
+  OS=""; [ -f /etc/os-release ] && OS=$(grep -m 1 '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d '"'); [ -z "$OS" ] && [ -f /etc/os-release ] && OS=$(grep -m 1 '^NAME=' /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d '"'); [ -z "$OS" ] && [ -f /etc/redhat-release ] && OS=$(cat /etc/redhat-release 2>/dev/null); [ -z "$OS" ] && [ -f /etc/alpine-release ] && OS="Alpine Linux $(cat /etc/alpine-release 2>/dev/null)"; [ -z "$OS" ] && [ -f /etc/issue ] && OS=$(head -n 1 /etc/issue 2>/dev/null | sed 's/\\\\.*//'); [ -z "$OS" ] && OS="Linux"; printf "PRETTY_NAME=%s\\n" "$OS"
+  printf "UNAME=%s\\n" "$(uname -s -r -m 2>/dev/null)"
+  printf "HOSTNAME=%s\\n" "$(cat /etc/hostname 2>/dev/null || uname -n 2>/dev/null || hostname 2>/dev/null)"
+  printf "UPTIME=%s\\n" "$(cat /proc/uptime 2>/dev/null || uptime 2>/dev/null)"
+  printf "CPUMODEL=%s\\n" "$(grep -E '^(model name|Hardware|Processor)' /proc/cpuinfo 2>/dev/null | head -n 1 | sed 's/.*:[ \\t]*//' || lscpu 2>/dev/null | grep 'Model name:' | sed 's/.*:[ \\t]*//' || uname -m 2>/dev/null)"
+  printf "CPUCORES=%s\\n" "$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
+  echo "---"\${TAG}"_METRIC_END---"
   sleep 2
 done
 `;
@@ -50,12 +51,12 @@ export class MetricsParser {
   public parseBlock(blockText: string): SystemMetrics | null {
     try {
       // Split block by custom section delimiters
-      const rawTimestamp = blockText.match(/---FS_METRIC_START---\s*\n\s*(\d+)/);
+      const rawTimestamp = blockText.match(/^\s*(\d+)/) || blockText.match(/---FS_METRIC_START---\s*(?:\r?\n)?\s*(\d+)/);
       const timestamp = rawTimestamp ? parseInt(rawTimestamp[1], 10) * 1000 : Date.now();
 
-      // Extract section texts
+      // Extract section texts using line-anchored regex
       const getSection = (name: string): string => {
-        const regex = new RegExp(`===${name}===([\\s\\S]*?)(?=(===FS_|---FS_METRIC_END---|$))`);
+        const regex = new RegExp(`(?:^|\\r?\\n)===${name}===\\s*\\r?\\n([\\s\\S]*?)(?=(?:\\r?\\n===FS_|\\r?\\n---FS_METRIC_END---|$))`);
         const match = blockText.match(regex);
         return match ? match[1].trim() : '';
       };
@@ -382,7 +383,7 @@ export class MetricsParser {
           }
         }
 
-        if (pid > 0 && command) {
+        if (pid > 0 && command && !command.includes('FS_') && !command.includes('METRIC_')) {
           procs.push({ pid, user, cpu, mem, command });
         }
       }
@@ -455,14 +456,10 @@ export class MetricsParser {
             cpuModel = line.substring(9).trim();
           } else if (line.startsWith('CPUCORES=')) {
             cpuCores = parseInt(line.substring(9).trim(), 10) || 1;
-          } else if (line.includes('Linux') || line.includes('Darwin') || line.includes('BSD')) {
+          } else if (/^(Linux|Darwin|FreeBSD|OpenBSD)\s+(\S+)\s+(\S+)/i.test(line)) {
             const uparts = line.split(/\s+/);
-            if (uparts.length >= 3) {
-              kernel = uparts[1] || '';
-              arch = uparts[2] || '';
-            } else {
-              kernel = line;
-            }
+            kernel = uparts[1] || '';
+            arch = uparts[2] || '';
           } else if (/^\d+(\.\d+)?\s+\d+/.test(line)) {
             const totalSeconds = parseFloat(line.split(/\s+/)[0]) || 0;
             const days = Math.floor(totalSeconds / 86400);
@@ -476,9 +473,20 @@ export class MetricsParser {
             } else {
               uptimeStr = `${Math.max(1, minutes)}分钟`;
             }
-          } else if (!hostname && line.length < 64 && !line.includes('/') && !line.includes('=')) {
+          } else if (!hostname && !/\s/.test(line) && /^[a-zA-Z0-9][-a-zA-Z0-9_.]{0,62}$/.test(line)) {
             hostname = line;
           }
+        }
+
+        // Sanitize extracted fields against corrupted inputs
+        if (kernel && (kernel.includes('printf') || kernel.includes('%') || kernel.includes('='))) {
+          kernel = '';
+        }
+        if (arch && (!/^[a-zA-Z0-9_-]+$/.test(arch) || arch.includes('%') || arch.includes('='))) {
+          arch = '';
+        }
+        if (cpuModel && (cpuModel.includes('PRETTY_NAME') || cpuModel.includes('%') || cpuModel.includes('='))) {
+          cpuModel = '';
         }
 
         if (os || kernel || arch || hostname || uptimeStr || cpuModel) {
