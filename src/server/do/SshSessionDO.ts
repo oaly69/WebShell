@@ -199,7 +199,7 @@ export class SshSessionDO extends DurableObject {
           try {
             entries = await this.sftp!.readdir(targetPath);
           } catch (dirErr: any) {
-            // If '/root' was requested for a non-root user, fallback to user's home directory
+            // If requested directory failed (e.g. non-root or missing /root in containers), fallback to home or /
             if (targetPath === '/root') {
               const homePath = await this.sftp!.realpath('.');
               if (homePath && homePath !== '/root') {
@@ -209,6 +209,9 @@ export class SshSessionDO extends DurableObject {
                 targetPath = '/';
                 entries = await this.sftp!.readdir('/');
               }
+            } else if (targetPath !== '/') {
+              targetPath = '/';
+              entries = await this.sftp!.readdir('/');
             } else {
               throw dirErr;
             }
@@ -345,20 +348,32 @@ export class SshSessionDO extends DurableObject {
     const endTag = '---FS_METRIC_END---';
 
     while (this.monitorBuffer.includes(endTag)) {
-      const startIndex = this.monitorBuffer.indexOf(startTag);
       const endIndex = this.monitorBuffer.indexOf(endTag);
+      const startIndex = this.monitorBuffer.indexOf(startTag);
 
-      if (startIndex !== -1 && endIndex > startIndex) {
-        const block = this.monitorBuffer.substring(startIndex + startTag.length, endIndex);
+      if (startIndex === -1 || endIndex < startIndex) {
+        // Discard orphan leading data or stray endTag
         this.monitorBuffer = this.monitorBuffer.substring(endIndex + endTag.length);
+        continue;
+      }
 
-        const metrics = this.monitorParser.parseBlock(block);
-        if (metrics && this.ws) {
-          const packet = encodeMonitorData(metrics);
-          this.ws.send(packet);
-        }
+      const block = this.monitorBuffer.substring(startIndex + startTag.length, endIndex);
+      this.monitorBuffer = this.monitorBuffer.substring(endIndex + endTag.length);
+
+      const metrics = this.monitorParser.parseBlock(block);
+      if (metrics && this.ws) {
+        const packet = encodeMonitorData(metrics);
+        this.ws.send(packet);
+      }
+    }
+
+    // Safety guard against unbounded memory growth
+    if (this.monitorBuffer.length > 256 * 1024) {
+      const lastStart = this.monitorBuffer.lastIndexOf(startTag);
+      if (lastStart !== -1) {
+        this.monitorBuffer = this.monitorBuffer.substring(lastStart);
       } else {
-        break;
+        this.monitorBuffer = '';
       }
     }
   }
