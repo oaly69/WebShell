@@ -621,9 +621,10 @@ export class SshClient {
 
     // Send SSH_MSG_USERAUTH_REQUEST
     if (this.options.authType === 'password') {
+      const username = (this.options.username || '').trim();
       const auth = new SshPacketWriter();
       auth.writeByte(SSH_MSG.USERAUTH_REQUEST);
-      auth.writeString(this.options.username);
+      auth.writeString(username);
       auth.writeString('ssh-connection');
       auth.writeString('password');
       auth.writeBoolean(false);

@@ -392,18 +392,28 @@ class JavaRandom {
   }
 }
 
+// Fixed keys used across various FinalShell legacy and transitional versions
+// FinalShell 2.x standard: md5(b"finashel")[:8]
+const V2_KEY_MD5_FINASHEL = md5(new TextEncoder().encode('finashel')).slice(0, 8);
+// FinalShell variant: md5(b"finalshell")[:8]
+const V2_KEY_MD5_FINALSHELL = md5(new TextEncoder().encode('finalshell')).slice(0, 8);
+// FinalShell variant: ASCII "finashel"
+const V2_KEY_ASCII_FINASHEL = new Uint8Array([102, 105, 110, 97, 115, 104, 101, 108]);
+// FinalShell variant: ASCII "finalshe"
+const V2_KEY_ASCII_FINALSHE = new Uint8Array([102, 105, 110, 97, 115, 104, 101]);
+
 /**
  * Derives the DES key from the first 8 bytes (head) of FinalShell encrypted password
  */
-function deriveDesKey(headBytes: Uint8Array): Uint8Array {
-  const head5 = toSignedByte(headBytes[5]);
+function deriveDesKey(headBytes: Uint8Array, unsignedHead = false): Uint8Array {
+  const head5 = unsignedHead ? headBytes[5] : toSignedByte(headBytes[5]);
   const randForDivisor = new JavaRandom(BigInt(head5));
   let divisor = randForDivisor.nextInt(127);
   if (divisor === 0) divisor = 1;
 
   const ks = 3680984568597093857n / BigInt(divisor);
   const random = new JavaRandom(ks);
-  const t = toSignedByte(headBytes[0]);
+  const t = unsignedHead ? headBytes[0] : toSignedByte(headBytes[0]);
 
   if (t > 0) {
     for (let i = 0; i < t; i++) {
@@ -414,15 +424,21 @@ function deriveDesKey(headBytes: Uint8Array): Uint8Array {
   const n = random.nextLong();
   const r2 = new JavaRandom(n);
 
+  const b4 = unsignedHead ? BigInt(headBytes[4]) : BigInt(toSignedByte(headBytes[4]));
+  const b7 = unsignedHead ? BigInt(headBytes[7]) : BigInt(toSignedByte(headBytes[7]));
+  const b3 = unsignedHead ? BigInt(headBytes[3]) : BigInt(toSignedByte(headBytes[3]));
+  const b1 = unsignedHead ? BigInt(headBytes[1]) : BigInt(toSignedByte(headBytes[1]));
+  const b2 = unsignedHead ? BigInt(headBytes[2]) : BigInt(toSignedByte(headBytes[2]));
+
   const ld: bigint[] = [
-    BigInt(toSignedByte(headBytes[4])),
+    b4,
     r2.nextLong(),
-    BigInt(toSignedByte(headBytes[7])),
-    BigInt(toSignedByte(headBytes[3])),
+    b7,
+    b3,
     r2.nextLong(),
-    BigInt(toSignedByte(headBytes[1])),
+    b1,
     random.nextLong(),
-    BigInt(toSignedByte(headBytes[2])),
+    b2,
   ];
 
   const keyData = new Uint8Array(64);
@@ -437,8 +453,12 @@ function deriveDesKey(headBytes: Uint8Array): Uint8Array {
 }
 
 function base64ToBytes(base64: string): Uint8Array {
+  let s = base64.trim().replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+  const pad = s.length % 4;
+  if (pad) s += '='.repeat(4 - pad);
+
   if (typeof atob === 'function') {
-    const binary = atob(base64);
+    const binary = atob(s);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
       bytes[i] = binary.charCodeAt(i);
@@ -450,16 +470,16 @@ function base64ToBytes(base64: string): Uint8Array {
   for (let i = 0; i < chars.length; i++) {
     lookup[chars.charCodeAt(i)] = i;
   }
-  let len = base64.length;
-  if (base64.endsWith('==')) len -= 2;
-  else if (base64.endsWith('=')) len -= 1;
+  let len = s.length;
+  if (s.endsWith('==')) len -= 2;
+  else if (s.endsWith('=')) len -= 1;
   const bytes = new Uint8Array(Math.floor((len * 3) / 4));
   let p = 0;
-  for (let i = 0; i < base64.length; i += 4) {
-    const a = lookup[base64.charCodeAt(i)];
-    const b = lookup[base64.charCodeAt(i + 1)];
-    const c = lookup[base64.charCodeAt(i + 2)];
-    const d = lookup[base64.charCodeAt(i + 3)];
+  for (let i = 0; i < s.length; i += 4) {
+    const a = lookup[s.charCodeAt(i)];
+    const b = lookup[s.charCodeAt(i + 1)];
+    const c = lookup[s.charCodeAt(i + 2)];
+    const d = lookup[s.charCodeAt(i + 3)];
     bytes[p++] = (a << 2) | (b >> 4);
     if (p < bytes.length) bytes[p++] = ((b & 15) << 4) | (c >> 2);
     if (p < bytes.length) bytes[p++] = ((c & 3) << 6) | (d & 63);
@@ -467,56 +487,129 @@ function base64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
+function tryDecryptUtf8(data: Uint8Array, key: Uint8Array): string | null {
+  try {
+    const decryptedBytes = desDecryptEcb(data, key);
+    if (!decryptedBytes || decryptedBytes.length === 0) return null;
+    let result = '';
+    try {
+      result = new TextDecoder('utf-8', { fatal: true }).decode(decryptedBytes);
+    } catch {
+      try {
+        result = new TextDecoder('gbk').decode(decryptedBytes);
+      } catch {
+        result = new TextDecoder('latin1').decode(decryptedBytes);
+      }
+    }
+    // Ensure string is non-empty and has no illegal control characters (allow \t, \r, \n)
+    if (result && !/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(result)) {
+      return result;
+    }
+  } catch {}
+  return null;
+}
+
 /**
- * Decodes a FinalShell encrypted password string (supports v3.x dynamic key and v2.x fixed key)
+ * Decodes a FinalShell encrypted password string (supports v3.x dynamic key, v2.x fixed keys, and all known variants)
  */
 export function decodeFinalShellPassword(cipherBase64: string): string {
   if (!cipherBase64 || typeof cipherBase64 !== 'string') return '';
   const trimmed = cipherBase64.trim();
+  if (trimmed.length < 8) return trimmed;
 
-  // If plaintext password without base64 length or invalid base64, return directly
-  if (!/^[A-Za-z0-9+/=]+$/.test(trimmed) || trimmed.length < 8) {
+  // Clean base64 string
+  const cleanBase64 = trimmed.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+  // Check if it looks like base64
+  if (!/^[A-Za-z0-9+/=]+$/.test(cleanBase64)) {
     return trimmed;
   }
 
+  let raw: Uint8Array;
   try {
-    const raw = base64ToBytes(trimmed);
-
-    // Attempt 1: FinalShell 3.x (8 bytes head + DES-ECB ciphertext)
-    if (raw.length > 8 && (raw.length - 8) % 8 === 0) {
-      try {
-        const head = raw.slice(0, 8);
-        const body = raw.slice(8);
-        const key = deriveDesKey(head);
-        const decryptedBytes = desDecryptEcb(body, key);
-        const result = new TextDecoder('utf-8', { fatal: true }).decode(decryptedBytes);
-        // Ensure no illegal control characters (allow common whitespace: \t, \r, \n)
-        if (result && !/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(result)) {
-          return result;
-        }
-      } catch {
-        // Fall through
-      }
-    }
-
-    // Attempt 2: FinalShell 2.x (fixed key 'finashel' 8 bytes DES ECB)
-    if (raw.length >= 8 && raw.length % 8 === 0) {
-      try {
-        const v2Key = new Uint8Array([102, 105, 110, 97, 115, 104, 101, 108]); // 'finashel'
-        const decryptedBytes = desDecryptEcb(raw, v2Key);
-        const result = new TextDecoder('utf-8', { fatal: true }).decode(decryptedBytes);
-        if (result && !/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(result)) {
-          return result;
-        }
-      } catch {
-        // Fall through
-      }
-    }
-
-    return trimmed;
+    raw = base64ToBytes(cleanBase64);
   } catch {
     return trimmed;
   }
+
+  // Attempt 1: FinalShell 3.x and variants (8 bytes head + DES-ECB ciphertext body)
+  if (raw.length >= 16 && (raw.length - 8) % 8 === 0) {
+    const head = raw.slice(0, 8);
+    const body = raw.slice(8);
+
+    // 1a. Standard FinalShell 3.x (JavaRandom with signed bytes)
+    try {
+      const key = deriveDesKey(head, false);
+      const res = tryDecryptUtf8(body, key);
+      if (res !== null) return res;
+    } catch {}
+
+    // 1b. FinalShell 3.x variant with unsigned bytes
+    try {
+      const key = deriveDesKey(head, true);
+      const res = tryDecryptUtf8(body, key);
+      if (res !== null) return res;
+    } catch {}
+
+    // 1c. FinalShell variant using MD5 of head (zanglikun / CSDN)
+    try {
+      const key = md5(head).slice(0, 8);
+      const res = tryDecryptUtf8(body, key);
+      if (res !== null) return res;
+    } catch {}
+
+    // 1d. FinalShell variant using head directly as 8-byte DES key
+    try {
+      const res = tryDecryptUtf8(body, head);
+      if (res !== null) return res;
+    } catch {}
+
+    // 1e. FinalShell variant using JavaRandom n directly
+    try {
+      const head5 = toSignedByte(head[5]);
+      const randForDivisor = new JavaRandom(BigInt(head5));
+      let divisor = randForDivisor.nextInt(127);
+      if (divisor === 0) divisor = 1;
+      const ks = 3680984568597093857n / BigInt(divisor);
+      const random = new JavaRandom(ks);
+      const t = toSignedByte(head[0]);
+      if (t > 0) {
+        for (let i = 0; i < t; i++) random.nextLong();
+      }
+      const n = random.nextLong();
+      const keyN = longToBytes(n);
+      const res = tryDecryptUtf8(body, keyN);
+      if (res !== null) return res;
+    } catch {}
+  }
+
+  // Attempt 2: FinalShell 2.x and legacy fixed key (DES-ECB on entire raw payload)
+  if (raw.length >= 8 && raw.length % 8 === 0) {
+    // 2a. Fixed key md5("finashel")[:8] - standard FinalShell 2.x
+    try {
+      const res = tryDecryptUtf8(raw, V2_KEY_MD5_FINASHEL);
+      if (res !== null) return res;
+    } catch {}
+
+    // 2b. Fixed key md5("finalshell")[:8]
+    try {
+      const res = tryDecryptUtf8(raw, V2_KEY_MD5_FINALSHELL);
+      if (res !== null) return res;
+    } catch {}
+
+    // 2c. Fixed key ASCII "finashel"
+    try {
+      const res = tryDecryptUtf8(raw, V2_KEY_ASCII_FINASHEL);
+      if (res !== null) return res;
+    } catch {}
+
+    // 2d. Fixed key ASCII "finalshe"
+    try {
+      const res = tryDecryptUtf8(raw, V2_KEY_ASCII_FINALSHE);
+      if (res !== null) return res;
+    } catch {}
+  }
+
+  return trimmed;
 }
 
 /**
@@ -637,18 +730,51 @@ export function parseFinalShellConfig(
     const name = (item.name || item['#name'] || item.server_name || item.text || hostname).trim();
     const username = (
       item.user_name ||
+      item.userName ||
       item['#user_name'] ||
+      item['#userName'] ||
       item.user ||
       item.username ||
+      item.login_user ||
+      item.loginUser ||
       'root'
     ).trim();
 
-    const rawPassword = item.password || item['#password'] || item.pass || item.pwd || '';
+    const rawPassword = (
+      item.password ||
+      item.Password ||
+      item['#password'] ||
+      item.pass ||
+      item.pwd ||
+      item.passwd ||
+      item.sftpPassword ||
+      item.sftp_password ||
+      item.auth_value ||
+      item.authValue ||
+      ''
+    ).trim();
     const decryptedPassword = decodeFinalShellPassword(rawPassword);
 
-    const privateKey = (item.private_key || item.key || item.private_key_text || '').trim();
+    const privateKey = (item.private_key || item.key || item.private_key_text || item.secret_key || '').trim();
+
     // In FinalShell, auth_type: 1 is publickey/privatekey, 2 is password
-    const isKey = item.auth_type === 1 || item.auth_type === 'private_key' || (privateKey.length > 0 && !decryptedPassword);
+    let isKey = false;
+    if (
+      item.auth_type === 1 ||
+      item.auth_type === '1' ||
+      item.auth_type === 'private_key' ||
+      item.auth_type === 'key'
+    ) {
+      isKey = true;
+    } else if (
+      item.auth_type === 2 ||
+      item.auth_type === '2' ||
+      item.auth_type === 'password'
+    ) {
+      isKey = false;
+    } else {
+      isKey = !decryptedPassword && privateKey.length > 0;
+    }
 
     let rawItemParent = (
       item.parent_name ||
@@ -681,8 +807,8 @@ export function parseFinalShellConfig(
       username,
       auth_type: isKey ? 'private_key' : 'password',
       credentials: {
-        password: isKey ? '' : decryptedPassword,
-        privateKey: isKey ? privateKey : '',
+        password: decryptedPassword,
+        privateKey: privateKey,
       },
       group_name,
     });

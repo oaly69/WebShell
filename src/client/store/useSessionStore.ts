@@ -82,9 +82,9 @@ function attachWebSocketSession(
     const handshake = encodeControlMsg({
       type: 'connect',
       hostId: host.id,
-      hostname: host.hostname,
+      hostname: host.hostname.trim(),
       port: host.port,
-      username: host.username,
+      username: host.username.trim(),
       authType: host.auth_type,
       password: creds?.password ? decodeFinalShellPassword(creds.password) : undefined,
       privateKey: creds?.privateKey,
