@@ -308,7 +308,7 @@ function desBlock(blockBits: number[], subkeys: number[][], decrypt: boolean): n
   return permute(preoutput, FP);
 }
 
-function desDecryptEcb(ciphertext: Uint8Array, key: Uint8Array): Uint8Array {
+function desDecryptEcb(ciphertext: Uint8Array, key: Uint8Array): Uint8Array | null {
   const subkeys = generateSubkeys(key);
   const result: number[] = [];
 
@@ -321,10 +321,10 @@ function desDecryptEcb(ciphertext: Uint8Array, key: Uint8Array): Uint8Array {
   }
 
   const unpadded = bitsToBytes(result);
-  // PKCS5 unpad
-  if (unpadded.length > 0) {
+  // Strict PKCS#5 unpad validation (mandatory for DES/ECB/PKCS5Padding)
+  if (unpadded.length > 0 && unpadded.length % 8 === 0) {
     const padLen = unpadded[unpadded.length - 1];
-    if (padLen >= 1 && padLen <= 8) {
+    if (padLen >= 1 && padLen <= 8 && padLen <= unpadded.length) {
       let valid = true;
       for (let p = unpadded.length - padLen; p < unpadded.length; p++) {
         if (unpadded[p] !== padLen) {
@@ -337,7 +337,7 @@ function desDecryptEcb(ciphertext: Uint8Array, key: Uint8Array): Uint8Array {
       }
     }
   }
-  return unpadded;
+  return null;
 }
 
 const toSignedByte = (b: number): number => (b >= 128 ? b - 256 : b);
@@ -491,18 +491,9 @@ function tryDecryptUtf8(data: Uint8Array, key: Uint8Array): string | null {
   try {
     const decryptedBytes = desDecryptEcb(data, key);
     if (!decryptedBytes || decryptedBytes.length === 0) return null;
-    let result = '';
-    try {
-      result = new TextDecoder('utf-8', { fatal: true }).decode(decryptedBytes);
-    } catch {
-      try {
-        result = new TextDecoder('gbk').decode(decryptedBytes);
-      } catch {
-        result = new TextDecoder('latin1').decode(decryptedBytes);
-      }
-    }
+    const result = new TextDecoder('utf-8', { fatal: true }).decode(decryptedBytes);
     // Ensure string is non-empty and has no illegal control characters (allow \t, \r, \n)
-    if (result && !/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(result)) {
+    if (result && !/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(result)) {
       return result;
     }
   } catch {}
@@ -614,10 +605,12 @@ export function decodeFinalShellPassword(cipherBase64: string): string {
 
 /**
  * Extracts hierarchical group name from a relative file path (e.g. from folder import)
- * Example: 'conn/香港节点/NAT/hk-01.json' -> '香港节点/NAT'
- * Example: 'Web集群/生产/server.json' -> 'Web集群/生产'
+ * Resolves FinalShell random folder IDs using folderNameMap (parsed from folder.json) when available.
  */
-export function extractGroupFromPath(relativePath: string): string {
+export function extractGroupFromPath(
+  relativePath: string,
+  folderNameMap?: Record<string, string>
+): string {
   if (!relativePath) return '';
   const normalized = relativePath.replace(/\\/g, '/');
   const parts = normalized.split('/').map((s) => s.trim()).filter(Boolean);
@@ -628,17 +621,13 @@ export function extractGroupFromPath(relativePath: string): string {
   const dirSegments = parts.slice(0, parts.length - 1);
   // Strip 'conn' or 'connections' root folder (FinalShell's default root folder)
   if (
-    dirSegments.length > 1 &&
-    (dirSegments[0].toLowerCase() === 'conn' || dirSegments[0].toLowerCase() === 'connections')
-  ) {
-    dirSegments.shift();
-  } else if (
-    dirSegments.length === 1 &&
+    dirSegments.length >= 1 &&
     (dirSegments[0].toLowerCase() === 'conn' || dirSegments[0].toLowerCase() === 'connections')
   ) {
     dirSegments.shift();
   }
-  return dirSegments.join('/');
+  const mappedSegments = dirSegments.map((seg) => (folderNameMap && folderNameMap[seg]) || seg);
+  return mappedSegments.join('/');
 }
 
 /**

@@ -19,6 +19,9 @@ export type ClientControlMsg =
       password?: string;
       privateKey?: string;
       passphrase?: string;
+      connectionMode?: 'tcp' | 'cf_tunnel';
+      cfAccessClientId?: string;
+      cfAccessClientSecret?: string;
       cols?: number;
       rows?: number;
     }

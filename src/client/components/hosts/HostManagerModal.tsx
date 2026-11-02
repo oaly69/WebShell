@@ -187,7 +187,14 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({
                 className="group flex items-center justify-between rounded p-1.5 text-xs hover:bg-fs-hover cursor-pointer"
               >
                 <div className="flex flex-col min-w-0 pr-2">
-                  <span className="font-medium text-fs-text truncate">{host.name}</span>
+                  <div className="flex items-center space-x-1.5">
+                    <span className="font-medium text-fs-text truncate">{host.name}</span>
+                    {host.credentials?.connectionMode === 'cf_tunnel' && (
+                      <span className="shrink-0 rounded bg-fs-warning/15 border border-fs-warning/30 px-1 py-0.2 text-[9px] text-fs-warning font-mono">
+                        CF Tunnel
+                      </span>
+                    )}
+                  </div>
                   <span className="text-[11px] text-fs-textMuted truncate">
                     {host.username}@{host.hostname}:{host.port}
                   </span>
@@ -252,6 +259,13 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({
 
     let cleanHost = editingHost.hostname.trim();
     let cleanPort = editingHost.port || 22;
+    let nextConnectionMode = editingHost.credentials.connectionMode || 'tcp';
+
+    const tunnelPrefixMatch = cleanHost.match(/^(wss?|https?|cf|tunnel):\/\/(.+)$/i);
+    if (tunnelPrefixMatch) {
+      cleanHost = tunnelPrefixMatch[2].replace(/\/.*$/, '').trim();
+      nextConnectionMode = 'cf_tunnel';
+    }
 
     const bracketPortMatch = cleanHost.match(/^\[([a-fA-F0-9:]+)\]:(\d+)$/);
     if (bracketPortMatch) {
@@ -280,6 +294,10 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({
         ...editingHost,
         hostname: cleanHost,
         port: cleanPort,
+        credentials: {
+          ...editingHost.credentials,
+          connectionMode: nextConnectionMode,
+        },
       });
       setIsFormOpen(false);
       setEditingHost(null);
@@ -332,7 +350,7 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({
                     port: 22,
                     username: 'root',
                     auth_type: 'password',
-                    credentials: { password: '' },
+                    credentials: { password: '', connectionMode: 'tcp' },
                     sort_order: 0,
                     updated_at: Date.now(),
                   });
@@ -398,6 +416,50 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({
                   onChange={(e) => setEditingHost({ ...editingHost, name: e.target.value })}
                   className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
                 />
+              </div>
+
+              {/* Connection Mode Selector (Direct TCP vs CF Tunnel) */}
+              <div>
+                <label className="block text-xs text-fs-text mb-1">连接通道类型</label>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEditingHost({
+                        ...editingHost,
+                        credentials: { ...editingHost.credentials, connectionMode: 'tcp' },
+                      })
+                    }
+                    className={`rounded-lg border px-2.5 py-1.5 text-center font-medium transition-colors ${
+                      (editingHost.credentials.connectionMode || 'tcp') === 'tcp'
+                        ? 'border-fs-primary bg-fs-primary/15 text-fs-text'
+                        : 'border-fs-border bg-fs-bg text-fs-textMuted hover:text-fs-text'
+                    }`}
+                  >
+                    标准 TCP 直连 (公网/NAT)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEditingHost({
+                        ...editingHost,
+                        credentials: { ...editingHost.credentials, connectionMode: 'cf_tunnel' },
+                      })
+                    }
+                    className={`rounded-lg border px-2.5 py-1.5 text-center font-medium transition-colors ${
+                      editingHost.credentials.connectionMode === 'cf_tunnel'
+                        ? 'border-fs-warning bg-fs-warning/15 text-fs-warning'
+                        : 'border-fs-border bg-fs-bg text-fs-textMuted hover:text-fs-text'
+                    }`}
+                  >
+                    CF Tunnel 内网穿透
+                  </button>
+                </div>
+                {editingHost.credentials.connectionMode === 'cf_tunnel' && (
+                  <p className="text-[11px] text-fs-textMuted mt-1 leading-relaxed">
+                    适用于无公网 IP、通过 <code className="font-mono text-fs-warning">cloudflared</code> 暴露 <code className="font-mono">ssh://localhost:22</code> 的服务器，无需安装客户端即可通过 WebSocket 直连。
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -483,7 +545,9 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({
                   )}
                 </div>
                 <div>
-                  <label className="block text-xs text-fs-text mb-1">SSH 端口</label>
+                  <label className="block text-xs text-fs-text mb-1">
+                    {editingHost.credentials.connectionMode === 'cf_tunnel' ? '隧道端口 (默认 443/22)' : 'SSH 端口'}
+                  </label>
                   <input
                     type="number"
                     value={editingHost.port}
@@ -495,11 +559,17 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-fs-text mb-1">主机名 / IP 地址</label>
+                  <label className="block text-xs text-fs-text mb-1">
+                    {editingHost.credentials.connectionMode === 'cf_tunnel' ? 'CF Tunnel 域名' : '主机名 / IP 地址'}
+                  </label>
                   <input
                     type="text"
                     required
-                    placeholder="192.168.1.1 或域名"
+                    placeholder={
+                      editingHost.credentials.connectionMode === 'cf_tunnel'
+                        ? 'ssh.example.com'
+                        : '192.168.1.1 或域名'
+                    }
                     value={editingHost.hostname}
                     onChange={(e) => setEditingHost({ ...editingHost, hostname: e.target.value })}
                     className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"
@@ -517,6 +587,46 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({
                   />
                 </div>
               </div>
+
+              {editingHost.credentials.connectionMode === 'cf_tunnel' && (
+                <div className="rounded-xl border border-fs-border bg-fs-bg/50 p-2.5 space-y-2">
+                  <div className="text-[11px] font-medium text-fs-textMuted">
+                    Cloudflare Access 零信任服务令牌 (若未启用 Access 鉴权请留空)
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      placeholder="CF-Access-Client-Id (可选)"
+                      value={editingHost.credentials.cfAccessClientId || ''}
+                      onChange={(e) =>
+                        setEditingHost({
+                          ...editingHost,
+                          credentials: {
+                            ...editingHost.credentials,
+                            cfAccessClientId: e.target.value,
+                          },
+                        })
+                      }
+                      className="w-full rounded bg-fs-surface border border-fs-border px-2.5 py-1 text-[11px] text-fs-text focus:outline-none focus:border-fs-primary font-mono"
+                    />
+                    <input
+                      type="password"
+                      placeholder="CF-Access-Client-Secret (可选)"
+                      value={editingHost.credentials.cfAccessClientSecret || ''}
+                      onChange={(e) =>
+                        setEditingHost({
+                          ...editingHost,
+                          credentials: {
+                            ...editingHost.credentials,
+                            cfAccessClientSecret: e.target.value,
+                          },
+                        })
+                      }
+                      className="w-full rounded bg-fs-surface border border-fs-border px-2.5 py-1 text-[11px] text-fs-text focus:outline-none focus:border-fs-primary font-mono"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs text-fs-text mb-1">认证方式</label>
@@ -544,17 +654,39 @@ export const HostManagerModal: React.FC<HostManagerModalProps> = ({
 
               {editingHost.auth_type === 'password' ? (
                 <div>
-                  <label className="block text-xs text-fs-text mb-1">SSH 密码</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs text-fs-text">SSH 密码</label>
+                    {editingHost.credentials.password &&
+                      editingHost.credentials.password.length >= 16 &&
+                      decodeFinalShellPassword(editingHost.credentials.password) !==
+                        editingHost.credentials.password && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEditingHost({
+                              ...editingHost,
+                              credentials: {
+                                ...editingHost.credentials,
+                                password: decodeFinalShellPassword(
+                                  editingHost.credentials.password || ''
+                                ),
+                              },
+                            })
+                          }
+                          className="text-[10px] text-fs-accent hover:underline"
+                        >
+                          检测到 FinalShell 密文，点击一键解密
+                        </button>
+                      )}
+                  </div>
                   <input
                     type="password"
                     placeholder="请输入密码（将在客户端加密存储）"
                     value={editingHost.credentials.password || ''}
                     onChange={(e) => {
-                      const val = e.target.value;
-                      const decoded = decodeFinalShellPassword(val);
                       setEditingHost({
                         ...editingHost,
-                        credentials: { ...editingHost.credentials, password: decoded },
+                        credentials: { ...editingHost.credentials, password: e.target.value },
                       });
                     }}
                     className="w-full rounded bg-fs-bg border border-fs-border px-3 py-1.5 text-xs text-fs-text focus:outline-none focus:border-fs-primary"

@@ -17,6 +17,9 @@ export interface SshConnectOptions {
   password?: string;
   privateKey?: string;
   passphrase?: string;
+  connectionMode?: 'tcp' | 'cf_tunnel';
+  cfAccessClientId?: string;
+  cfAccessClientSecret?: string;
   cols?: number;
   rows?: number;
   onShellData: (data: Uint8Array) => void;
@@ -39,8 +42,30 @@ export function isIpv6Address(host: string): boolean {
   return colonCount >= 2;
 }
 
+export function isIpv4Address(host: string): boolean {
+  if (!host) return false;
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host.trim());
+}
+
+export function parseTunnelPrefix(rawHost: string): {
+  strippedHost: string;
+  isTunnelPrefix: boolean;
+  scheme: 'http' | 'https';
+} {
+  const trimmed = (rawHost || '').trim();
+  const match = trimmed.match(/^(wss?|https?|cf|tunnel):\/\/(.+)$/i);
+  if (!match) {
+    return { strippedHost: trimmed, isTunnelPrefix: false, scheme: 'https' };
+  }
+  const proto = match[1].toLowerCase();
+  const rest = match[2].replace(/\/.*$/, '').trim();
+  const scheme = proto === 'ws' || proto === 'http' ? 'http' : 'https';
+  return { strippedHost: rest, isTunnelPrefix: true, scheme };
+}
+
 export function normalizeHostAddress(rawHost: string, defaultPort: number = 22): { hostname: string; port: number } {
-  let host = (rawHost || '').trim();
+  const { strippedHost } = parseTunnelPrefix(rawHost);
+  let host = strippedHost;
   let port = defaultPort;
 
   // Handle [ipv6]:port, e.g. [2001:db8::1]:2222
@@ -73,10 +98,157 @@ export function normalizeHostAddress(rawHost: string, defaultPort: number = 22):
   return { hostname: host, port };
 }
 
+async function connectViaCfTunnel(
+  cleanHost: string,
+  cleanPort: number,
+  scheme: 'http' | 'https' = 'https',
+  cfAccessClientId?: string,
+  cfAccessClientSecret?: string
+): Promise<{
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+  opened: Promise<void>;
+  closed: Promise<void>;
+  close: () => void;
+}> {
+  const hostHeader = isIpv6Address(cleanHost) ? `[${cleanHost}]` : cleanHost;
+  const isDefaultPort =
+    cleanPort === 22 ||
+    (scheme === 'https' && cleanPort === 443) ||
+    (scheme === 'http' && cleanPort === 80);
+  const targetUrl = isDefaultPort
+    ? `${scheme}://${hostHeader}/`
+    : `${scheme}://${hostHeader}:${cleanPort}/`;
+
+  const headers: Record<string, string> = {
+    Upgrade: 'websocket',
+    'User-Agent': 'cloudflared/2025.2.0',
+  };
+  if (cfAccessClientId && cfAccessClientId.trim()) {
+    headers['CF-Access-Client-Id'] = cfAccessClientId.trim();
+  }
+  if (cfAccessClientSecret && cfAccessClientSecret.trim()) {
+    headers['CF-Access-Client-Secret'] = cfAccessClientSecret.trim();
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(targetUrl, {
+      headers,
+      redirect: 'manual',
+    });
+  } catch (err: any) {
+    throw new Error(
+      `CF Tunnel 隧道请求失败 (${cleanHost})：${err?.message || '无法建立 WebSocket 连接'}`
+    );
+  }
+
+  const ws = (res as any).webSocket as WebSocket | undefined;
+  if (!ws) {
+    const location = res.headers.get('location') || '';
+    if (
+      res.status === 302 ||
+      res.status === 301 ||
+      res.status === 401 ||
+      res.status === 403 ||
+      location.includes('cloudflareaccess.com')
+    ) {
+      throw new Error(
+        `CF Tunnel 连接被 Cloudflare Access 零信任策略拦截 (HTTP ${res.status})。\n若该域名开启了 Zero Trust Access 保护，请在主机编辑界面填入 CF-Access-Client-Id 与 CF-Access-Client-Secret 服务令牌，或在 Cloudflare Zero Trust 后台将策略设为 Bypass。`
+      );
+    }
+    if (res.status === 530 || res.status === 502 || res.status === 504) {
+      throw new Error(
+        `CF Tunnel 隧道不在线或内网目标 SSH 未响应 (HTTP ${res.status})。\n请检查：\n1. 目标内网服务器上的 cloudflared 进程是否正常运行；\n2. cloudflared 后台 Public Hostname 的 Service Type 是否已设为 SSH (如 ssh://localhost:22)。`
+      );
+    }
+    throw new Error(
+      `无法通过 CF Tunnel 建立 WebSocket 隧道连接 (${cleanHost}, HTTP ${res.status})。\n请确认该域名已在 Cloudflare Zero Trust -> Tunnels -> Public Hostname 中配置为 SSH 服务类型 (ssh://localhost:22)。`
+    );
+  }
+
+  ws.accept();
+
+  let closeResolve!: () => void;
+  let closeReject!: (err: Error) => void;
+  const closed = new Promise<void>((resolve, reject) => {
+    closeResolve = resolve;
+    closeReject = reject;
+  });
+
+  const readable = new ReadableStream<Uint8Array>({
+    start(controller) {
+      ws.addEventListener('message', (event: MessageEvent) => {
+        try {
+          if (event.data instanceof ArrayBuffer) {
+            controller.enqueue(new Uint8Array(event.data));
+          } else if (event.data instanceof Uint8Array) {
+            controller.enqueue(event.data);
+          } else if (typeof event.data === 'string') {
+            controller.enqueue(new TextEncoder().encode(event.data));
+          }
+        } catch {}
+      });
+
+      ws.addEventListener('close', () => {
+        try {
+          controller.close();
+        } catch {}
+        closeResolve();
+      });
+
+      ws.addEventListener('error', (err: any) => {
+        const error = new Error(err?.message || 'CF Tunnel WebSocket 连接异常中断');
+        try {
+          controller.error(error);
+        } catch {}
+        closeReject(error);
+      });
+    },
+    cancel() {
+      try {
+        ws.close(1000, 'Stream cancelled');
+      } catch {}
+    },
+  });
+
+  const writable = new WritableStream<Uint8Array>({
+    write(chunk) {
+      ws.send(chunk);
+    },
+    close() {
+      try {
+        ws.close(1000, 'Normal closure');
+      } catch {}
+    },
+    abort() {
+      try {
+        ws.close(1000, 'Aborted');
+      } catch {}
+    },
+  });
+
+  return {
+    readable,
+    writable,
+    opened: Promise.resolve(),
+    closed,
+    close: () => {
+      try {
+        ws.close(1000, 'Client closed');
+      } catch {}
+    },
+  };
+}
+
 export function formatSocketError(msg: string, rawHost?: string, rawPort?: number): string {
   const { hostname: cleanHost, port: cleanPort } = normalizeHostAddress(rawHost || '', rawPort || 22);
   const isIpv6 = isIpv6Address(cleanHost);
   const targetStr = isIpv6 ? `[${cleanHost}]:${cleanPort}` : `${cleanHost}:${cleanPort}`;
+
+  if (msg.includes('CF Tunnel')) {
+    return msg;
+  }
 
   if (
     msg.includes('Stream was cancelled') ||
@@ -98,7 +270,7 @@ export function formatSocketError(msg: string, rawHost?: string, rawPort?: numbe
     if (isIpv6) {
       return `无法连接到目标 IPv6 服务器 (${targetStr})。\n排查指引：\n1. 确认该 IPv6 为公网可路由地址（若是家庭宽带内网或链路本地 fe80::、ULA fc00::/fd00::，Cloudflare 公网节点无法跨局域网直接访问，需使用公网 IPv6 或配置穿透）；\n2. 检查服务器 sshd_config 配置是否启用了 IPv6 监听（ListenAddress ::）；\n3. 检查云服务商安全组及服务器防火墙 (ufw/iptables/nftables) 是否已放行 IPv6 ${cleanPort} 入方向端口。`;
     }
-    return `无法连接到目标服务器 (${targetStr})。请检查目标 IP/域名、端口及网络与防火墙设置。`;
+    return `无法连接到目标服务器 (${targetStr})。请检查目标 IP/域名、端口及网络与防火墙设置（若是通过 CF Tunnel 穿透的内网主机，请在编辑主机中选择“CF Tunnel 内网穿透”模式并确认隧道已配置为 SSH 类型）。`;
   }
 
   if (msg.includes('Connection refused') || msg.includes('refused')) {
@@ -162,23 +334,82 @@ export class SshClient {
   }
 
   async connect(): Promise<void> {
+    const { isTunnelPrefix, scheme: prefixScheme } = parseTunnelPrefix(this.options.hostname);
     const { hostname: cleanHost, port: cleanPort } = normalizeHostAddress(
       this.options.hostname,
       this.options.port
     );
 
-    // Format target address for Cloudflare Workers connect() API:
-    // If the address is IPv6 (multiple colons), workerd REQUIRES square brackets "[...]"
-    // Without brackets, workerd throws "proxy request failed, cannot connect to the specified address" (WSAEADDRNOTAVAIL 10049)
     const isIpv6 = isIpv6Address(cleanHost);
+    const isIpv4 = isIpv4Address(cleanHost);
     const connectHost = isIpv6 ? `[${cleanHost.replace(/^\[|\]$/g, '')}]` : cleanHost;
     const targetDisplay = isIpv6 ? `${connectHost}:${cleanPort}` : `${cleanHost}:${cleanPort}`;
+    const useCfTunnel = this.options.connectionMode === 'cf_tunnel' || isTunnelPrefix;
 
     try {
-      this.socket = connect({
-        hostname: connectHost,
-        port: cleanPort,
-      });
+      if (useCfTunnel) {
+        const scheme = isTunnelPrefix ? prefixScheme : cleanPort === 80 ? 'http' : 'https';
+        this.socket = await connectViaCfTunnel(
+          cleanHost,
+          cleanPort,
+          scheme,
+          this.options.cfAccessClientId,
+          this.options.cfAccessClientSecret
+        );
+      } else {
+        this.socket = connect({
+          hostname: connectHost,
+          port: cleanPort,
+        });
+
+        // Wait for socket to establish connection or fail with descriptive error
+        if (this.socket.opened) {
+          let openTimeoutId: any;
+          const openTimeoutPromise = new Promise<never>((_, reject) => {
+            openTimeoutId = setTimeout(() => {
+              reject(
+                new Error(
+                  `TCP 连接超时 (10s)。无法连接到 ${targetDisplay}，请检查目标服务器是否开机、防火墙/安全组是否放行。`
+                )
+              );
+            }, 10000);
+          });
+
+          try {
+            await Promise.race([this.socket.opened, openTimeoutPromise]).finally(() => {
+              clearTimeout(openTimeoutId);
+            });
+          } catch (openErr: any) {
+            const errMsg = openErr?.message || '';
+            // Auto-fallback to CF Tunnel WebSocket if connecting to a domain name that resolves to Cloudflare Edge
+            if (
+              !isIpv4 &&
+              !isIpv6 &&
+              (errMsg.includes('cannot connect to the specified address') ||
+                errMsg.includes('proxy request failed'))
+            ) {
+              try {
+                if (this.socket) {
+                  try {
+                    this.socket.close();
+                  } catch {}
+                }
+                this.socket = await connectViaCfTunnel(
+                  cleanHost,
+                  cleanPort,
+                  cleanPort === 80 ? 'http' : 'https',
+                  this.options.cfAccessClientId,
+                  this.options.cfAccessClientSecret
+                );
+              } catch (tunnelErr: any) {
+                throw new Error(tunnelErr?.message || formatSocketError(errMsg, cleanHost, cleanPort));
+              }
+            } else {
+              throw new Error(formatSocketError(errMsg || '无法建立 TCP 连接', cleanHost, cleanPort));
+            }
+          }
+        }
+      }
 
       // Monitor socket.closed in background
       if (this.socket.closed) {
@@ -188,28 +419,6 @@ export class SshClient {
             this.close(formatSocketError(errMsg, cleanHost, cleanPort));
           }
         });
-      }
-
-      // Wait for socket to establish connection or fail with descriptive error
-      if (this.socket.opened) {
-        let openTimeoutId: any;
-        const openTimeoutPromise = new Promise<never>((_, reject) => {
-          openTimeoutId = setTimeout(() => {
-            reject(
-              new Error(
-                `TCP 连接超时 (10s)。无法连接到 ${targetDisplay}，请检查目标服务器是否开机、防火墙/安全组是否放行。`
-              )
-            );
-          }, 10000);
-        });
-
-        try {
-          await Promise.race([this.socket.opened, openTimeoutPromise]).finally(() => {
-            clearTimeout(openTimeoutId);
-          });
-        } catch (openErr: any) {
-          throw new Error(formatSocketError(openErr?.message || '无法建立 TCP 连接', cleanHost, cleanPort));
-        }
       }
 
       this.writer = this.socket.writable.getWriter();

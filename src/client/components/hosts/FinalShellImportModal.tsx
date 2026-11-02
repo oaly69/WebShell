@@ -117,9 +117,35 @@ export const FinalShellImportModal: React.FC<FinalShellImportModalProps> = ({
     }
 
     try {
+      // First pass: parse folder.json files to map FinalShell folder IDs (e.g. 'hcwmek5fproy3mra') to real folder names (e.g. 'vps')
+      const folderNameMap: Record<string, string> = {};
       for (const item of validFiles) {
+        if (item.file.name.toLowerCase() === 'folder.json') {
+          try {
+            const text = await item.file.text();
+            const parsed = JSON.parse(text);
+            if (parsed && typeof parsed === 'object' && parsed.name) {
+              const folderName = String(parsed.name).trim();
+              if (parsed.id && folderName) {
+                folderNameMap[String(parsed.id).trim()] = folderName;
+              }
+              const parts = item.relativePath.replace(/\\/g, '/').split('/').filter(Boolean);
+              if (parts.length >= 2) {
+                const parentDir = parts[parts.length - 2].trim();
+                if (parentDir && folderName) {
+                  folderNameMap[parentDir] = folderName;
+                }
+              }
+            }
+          } catch {}
+        }
+      }
+
+      // Second pass: parse host connection files
+      for (const item of validFiles) {
+        if (item.file.name.toLowerCase() === 'folder.json') continue;
         const text = await item.file.text();
-        const inferredGroup = extractGroupFromPath(item.relativePath);
+        const inferredGroup = extractGroupFromPath(item.relativePath, folderNameMap);
         const extracted = parseFinalShellConfig(text, inferredGroup);
         hostList.push(...extracted);
       }

@@ -107,10 +107,17 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
     if (!token) throw new Error('请先登录账号');
     if (!masterKey || isVaultLocked) throw new Error('安全密码箱处于锁定状态，请先输入主密码解锁');
 
-    const encrypted_cred = await encryptCredentials(masterKey, hostData.credentials);
-
     let cleanHostname = hostData.hostname.trim();
     let cleanPort = hostData.port || 22;
+    const credsToSave = { ...hostData.credentials };
+
+    const tunnelPrefixMatch = cleanHostname.match(/^(wss?|https?|cf|tunnel):\/\/(.+)$/i);
+    if (tunnelPrefixMatch) {
+      cleanHostname = tunnelPrefixMatch[2].replace(/\/.*$/, '').trim();
+      credsToSave.connectionMode = 'cf_tunnel';
+    }
+
+    const encrypted_cred = await encryptCredentials(masterKey, credsToSave);
 
     const bracketPortMatch = cleanHostname.match(/^\[([a-fA-F0-9:]+)\]:(\d+)$/);
     if (bracketPortMatch) {
@@ -121,10 +128,13 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
       if (bracketMatch) {
         cleanHostname = bracketMatch[1];
       } else {
-        const ipv4PortMatch = cleanHostname.match(/^(\d{1,3}(?:\.\d{1,3}){3}):(\d+)$/);
-        if (ipv4PortMatch) {
-          cleanHostname = ipv4PortMatch[1];
-          cleanPort = parseInt(ipv4PortMatch[2], 10) || cleanPort;
+        const colonCount = (cleanHostname.match(/:/g) || []).length;
+        if (colonCount === 1) {
+          const portMatch = cleanHostname.match(/^([a-zA-Z0-9.-]+):(\d+)$/);
+          if (portMatch) {
+            cleanHostname = portMatch[1];
+            cleanPort = parseInt(portMatch[2], 10) || cleanPort;
+          }
         }
       }
     }

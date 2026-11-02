@@ -26,6 +26,9 @@ export interface HostCredentials {
   password?: string;
   privateKey?: string;
   passphrase?: string;
+  connectionMode?: 'tcp' | 'cf_tunnel';
+  cfAccessClientId?: string;
+  cfAccessClientSecret?: string;
 }
 
 export interface HostRecord {

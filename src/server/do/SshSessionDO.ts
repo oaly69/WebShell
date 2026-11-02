@@ -105,16 +105,19 @@ export class SshSessionDO extends DurableObject {
         this.sftp = null;
         this.sftpInitPromise = null;
 
-        const { hostname: cleanHost, port: cleanPort } = normalizeHostAddress(msg.hostname, msg.port);
+        const { port: cleanPort } = normalizeHostAddress(msg.hostname, msg.port);
 
         this.ssh = new SshClient({
-          hostname: cleanHost,
+          hostname: msg.hostname,
           port: cleanPort,
           username: msg.username,
           authType: msg.authType,
           password: msg.password,
           privateKey: msg.privateKey,
           passphrase: msg.passphrase,
+          connectionMode: msg.connectionMode,
+          cfAccessClientId: msg.cfAccessClientId,
+          cfAccessClientSecret: msg.cfAccessClientSecret,
           cols: msg.cols || 80,
           rows: msg.rows || 24,
           onShellData: (data) => {

@@ -8,7 +8,6 @@ import {
   encodePtyData,
   type ServerControlMsg,
 } from '@shared/ws-protocol';
-import { decodeFinalShellPassword } from '../crypto/finalshellDecoder';
 
 export interface TerminalSession {
   sessionId: string;
@@ -86,9 +85,12 @@ function attachWebSocketSession(
       port: host.port,
       username: host.username.trim(),
       authType: host.auth_type,
-      password: creds?.password ? decodeFinalShellPassword(creds.password) : undefined,
+      password: creds?.password,
       privateKey: creds?.privateKey,
       passphrase: creds?.passphrase,
+      connectionMode: creds?.connectionMode,
+      cfAccessClientId: creds?.cfAccessClientId,
+      cfAccessClientSecret: creds?.cfAccessClientSecret,
       cols,
       rows,
     });
